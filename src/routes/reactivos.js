@@ -11,6 +11,20 @@ function likeParam(q) {
   return `%${(q || '').toLowerCase()}%`;
 }
 
+// Sanitize helpers
+function trimStr(v) {
+  return typeof v === 'string' ? v.trim() : v;
+}
+function toNull(v) {
+  const t = trimStr(v);
+  return t === '' || t === undefined ? null : t;
+}
+function numOrNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
 // GET /api/reactivos/aux
 router.get('/aux', async (req, res) => {
   try {
@@ -298,13 +312,35 @@ router.get('/:lote', async (req, res) => {
 router.post('/', async (req, res) => {
   const r = req.body || {};
   try {
-    // If cantidad_total not provided, compute from presentacion x presentacion_cant
-    let cantidad_total = r.cantidad_total;
-    if (cantidad_total == null && r.presentacion != null && r.presentacion_cant != null) {
-      const p = parseFloat(r.presentacion);
-      const pc = parseFloat(r.presentacion_cant);
-      if (!isNaN(p) && !isNaN(pc)) cantidad_total = p * pc;
+    // Required fields
+    const lote = trimStr(r.lote);
+    const codigo = trimStr(r.codigo);
+    const nombre = trimStr(r.nombre);
+    if (!lote || !codigo || !nombre) {
+      return res.status(400).json({ message: 'Faltan campos requeridos: lote, codigo, nombre' });
     }
+
+    // Numbers
+    const presentacion = numOrNull(r.presentacion);
+    const presentacion_cant = numOrNull(r.presentacion_cant);
+    let cantidad_total = r.cantidad_total != null ? numOrNull(r.cantidad_total) : null;
+    if (cantidad_total == null && presentacion != null && presentacion_cant != null) {
+      cantidad_total = presentacion * presentacion_cant;
+    }
+
+    // Optionals and dates
+    const marca = toNull(r.marca);
+    const referencia = toNull(r.referencia);
+    const cas = toNull(r.cas);
+    const fecha_adquisicion = toNull(r.fecha_adquisicion);
+    const fecha_vencimiento = toNull(r.fecha_vencimiento);
+    const observaciones = toNull(r.observaciones);
+    const tipo_id = numOrNull(r.tipo_id);
+    const clasificacion_id = numOrNull(r.clasificacion_id);
+    const unidad_id = numOrNull(r.unidad_id);
+    const estado_id = numOrNull(r.estado_id);
+    const almacenamiento_id = numOrNull(r.almacenamiento_id);
+    const tipo_recipiente_id = numOrNull(r.tipo_recipiente_id);
 
     await pool.query(
       `INSERT INTO reactivos (
@@ -313,10 +349,10 @@ router.post('/', async (req, res) => {
         almacenamiento_id, tipo_recipiente_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        r.lote, r.codigo, r.nombre, r.marca || null, r.referencia || null, r.cas || null,
-        r.presentacion, r.presentacion_cant, cantidad_total,
-        r.fecha_adquisicion, r.fecha_vencimiento, r.observaciones || null,
-        r.tipo_id, r.clasificacion_id, r.unidad_id, r.estado_id, r.almacenamiento_id, r.tipo_recipiente_id
+        lote, codigo, nombre, marca, referencia, cas,
+        presentacion, presentacion_cant, cantidad_total,
+        fecha_adquisicion, fecha_vencimiento, observaciones,
+        tipo_id, clasificacion_id, unidad_id, estado_id, almacenamiento_id, tipo_recipiente_id
       ]
     );
     res.status(201).json({ message: 'Creado' });
@@ -334,12 +370,27 @@ router.put('/:lote', async (req, res) => {
   const { lote } = req.params;
   const r = req.body || {};
   try {
-    let cantidad_total = r.cantidad_total;
-    if (cantidad_total == null && r.presentacion != null && r.presentacion_cant != null) {
-      const p = parseFloat(r.presentacion);
-      const pc = parseFloat(r.presentacion_cant);
-      if (!isNaN(p) && !isNaN(pc)) cantidad_total = p * pc;
+    const codigo = trimStr(r.codigo);
+    const nombre = trimStr(r.nombre);
+    const presentacion = numOrNull(r.presentacion);
+    const presentacion_cant = numOrNull(r.presentacion_cant);
+    let cantidad_total = r.cantidad_total != null ? numOrNull(r.cantidad_total) : null;
+    if (cantidad_total == null && presentacion != null && presentacion_cant != null) {
+      cantidad_total = presentacion * presentacion_cant;
     }
+
+    const marca = toNull(r.marca);
+    const referencia = toNull(r.referencia);
+    const cas = toNull(r.cas);
+    const fecha_adquisicion = toNull(r.fecha_adquisicion);
+    const fecha_vencimiento = toNull(r.fecha_vencimiento);
+    const observaciones = toNull(r.observaciones);
+    const tipo_id = numOrNull(r.tipo_id);
+    const clasificacion_id = numOrNull(r.clasificacion_id);
+    const unidad_id = numOrNull(r.unidad_id);
+    const estado_id = numOrNull(r.estado_id);
+    const almacenamiento_id = numOrNull(r.almacenamiento_id);
+    const tipo_recipiente_id = numOrNull(r.tipo_recipiente_id);
 
     const [result] = await pool.query(
       `UPDATE reactivos SET
@@ -348,9 +399,9 @@ router.put('/:lote', async (req, res) => {
         almacenamiento_id = ?, tipo_recipiente_id = ?
       WHERE lote = ?`,
       [
-        r.codigo, r.nombre, r.marca || null, r.referencia || null, r.cas || null, r.presentacion, r.presentacion_cant, cantidad_total,
-        r.fecha_adquisicion, r.fecha_vencimiento, r.observaciones || null, r.tipo_id, r.clasificacion_id, r.unidad_id, r.estado_id,
-        r.almacenamiento_id, r.tipo_recipiente_id, lote
+        codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
+        fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
+        almacenamiento_id, tipo_recipiente_id, lote
       ]
     );
     if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
