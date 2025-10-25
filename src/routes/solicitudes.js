@@ -2,28 +2,28 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// ---------- USUARIOS CRUD ----------
-// List usuarios (with optional search by nombre_solicitante)
-router.get('/usuarios', async (req, res) => {
+// ---------- CLIENTES CRUD ----------
+// List clientes (with optional search by nombre_solicitante)
+router.get('/clientes', async (req, res) => {
   const q = req.query.q || '';
   try {
     const [rows] = await pool.query(
-      `SELECT id_usuario, nombre_solicitante, numero_identificacion, correo_electronico, ciudad, activo
-       FROM usuarios
+      `SELECT id_cliente, nombre_solicitante, numero_identificacion, correo_electronico, ciudad, activo
+       FROM clientes
        WHERE nombre_solicitante LIKE ? OR correo_electronico LIKE ?
-       ORDER BY id_usuario DESC
+       ORDER BY id_cliente DESC
        LIMIT 200`,
       [`%${q}%`, `%${q}%`]
     );
     res.json(rows);
   } catch (err) {
-    console.error('GET /usuarios error', err);
+    console.error('GET /clientes error', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Create usuario
-router.post('/usuarios', async (req, res) => {
+// Create cliente
+router.post('/clientes', async (req, res) => {
   const body = req.body || {};
   const required = ['nombre_solicitante', 'tipo_identificacion', 'numero_identificacion'];
   for (const f of required) if (!body[f]) return res.status(400).json({ message: `Missing ${f}` });
@@ -32,7 +32,7 @@ router.post('/usuarios', async (req, res) => {
   let numeroVal = body.numero || null;
     if (!numeroVal) {
       try {
-        const [rmax] = await pool.query('SELECT MAX(numero) AS max FROM usuarios');
+        const [rmax] = await pool.query('SELECT MAX(numero) AS max FROM clientes');
         const maxNum = (rmax && rmax[0] && rmax[0].max) ? parseInt(rmax[0].max, 10) : 0;
         numeroVal = maxNum + 1;
       } catch (e) {
@@ -46,7 +46,7 @@ router.post('/usuarios', async (req, res) => {
     const sexoVal = body.sexo || 'Otro';
 
     const [result] = await pool.query(
-  `INSERT INTO usuarios (numero, fecha_vinculacion, tipo_usuario, razon_social, nit, nombre_solicitante, tipo_identificacion, numero_identificacion, sexo, tipo_poblacion, direccion, ciudad, departamento, celular, telefono, correo_electronico, tipo_vinculacion, registro_realizado_por, observaciones)
+  `INSERT INTO clientes (numero, fecha_vinculacion, tipo_usuario, razon_social, nit, nombre_solicitante, tipo_identificacion, numero_identificacion, sexo, tipo_poblacion, direccion, ciudad, departamento, celular, telefono, correo_electronico, tipo_vinculacion, registro_realizado_por, observaciones)
    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         numeroVal,
@@ -70,28 +70,28 @@ router.post('/usuarios', async (req, res) => {
         body.observaciones || null
       ]
     );
-    res.status(201).json({ id_usuario: result.insertId });
+    res.status(201).json({ id_cliente: result.insertId });
   } catch (err) {
-    console.error('POST /usuarios error', err);
+    console.error('POST /clientes error', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Get single usuario
-router.get('/usuarios/:id', async (req, res) => {
+// Get single cliente
+router.get('/clientes/:id', async (req, res) => {
   const id = req.params.id;
   try {
-    const [rows] = await pool.query('SELECT * FROM usuarios WHERE id_usuario = ?', [id]);
+    const [rows] = await pool.query('SELECT * FROM clientes WHERE id_cliente = ?', [id]);
     if (!rows.length) return res.status(404).json({ message: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
-    console.error('GET /usuarios/:id error', err);
+    console.error('GET /clientes/:id error', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Update usuario
-router.put('/usuarios/:id', async (req, res) => {
+// Update cliente
+router.put('/clientes/:id', async (req, res) => {
   const id = req.params.id;
   const body = req.body || {};
   try {
@@ -104,36 +104,36 @@ router.put('/usuarios/:id', async (req, res) => {
     }
     if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
     values.push(id);
-    await pool.query(`UPDATE usuarios SET ${fields.join(', ')} WHERE id_usuario = ?`, values);
+    await pool.query(`UPDATE clientes SET ${fields.join(', ')} WHERE id_cliente = ?`, values);
     res.json({ updated: true });
   } catch (err) {
-    console.error('PUT /usuarios/:id error', err);
+    console.error('PUT /clientes/:id error', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Delete usuario
-router.delete('/usuarios/:id', async (req, res) => {
+// Delete cliente
+router.delete('/clientes/:id', async (req, res) => {
   const id = req.params.id;
   try {
-    await pool.query('DELETE FROM usuarios WHERE id_usuario = ?', [id]);
+    await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
     res.json({ deleted: true });
   } catch (err) {
-    console.error('DELETE /usuarios/:id error', err);
+    console.error('DELETE /clientes/:id error', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
 // ---------- SOLICITUDES CRUD ----------
-// List solicitudes (with joined usuario info)
+// List solicitudes (with joined cliente info)
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT s.id_solicitud, s.numero_solicitud, s.codigo, s.fecha_solicitud, s.nombre_muestra_producto, s.cantidad_muestras_analizar,
               s.servicio_viable, s.genero_cotizacion, s.cliente_respondio_encuesta, s.numero_informe_resultados,
-              u.id_usuario, u.nombre_solicitante, u.correo_electronico
+              u.id_cliente, u.nombre_solicitante, u.correo_electronico
        FROM Solicitudes s
-       LEFT JOIN usuarios u ON s.id_usuario = u.id_usuario
+       LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
        ORDER BY s.id_solicitud DESC
        LIMIT 500`
     );
@@ -147,7 +147,7 @@ router.get('/', async (req, res) => {
 // Create solicitud
 router.post('/', async (req, res) => {
   const b = req.body || {};
-  if (!b.id_usuario) return res.status(400).json({ message: 'Missing id_usuario' });
+  if (!b.id_cliente) return res.status(400).json({ message: 'Missing id_cliente' });
   try {
     // ensure numero_solicitud is set
     let numeroSol = b.numero_solicitud || null;
@@ -160,11 +160,11 @@ router.post('/', async (req, res) => {
     }
 
     const [result] = await pool.query(
-      `INSERT INTO Solicitudes (numero_solicitud, id_usuario, codigo, fecha_solicitud, nombre_muestra_producto, lote_producto, fecha_vencimiento_producto, tipo_muestra, condiciones_empaque, tipo_analisis_requerido, requiere_varios_analisis, cantidad_muestras_analizar, fecha_estimada_entrega_muestra, puede_suministrar_informacion_adicional, servicio_viable, genero_cotizacion, valor_cotizacion, fecha_envio_oferta, realizo_seguimiento_oferta, observacion_oferta, fecha_limite_entrega_resultados, numero_informe_resultados, fecha_envio_resultados, cliente_respondio_encuesta, solicito_nueva_encuesta, observaciones_generales, mes_solicitud)
+      `INSERT INTO Solicitudes (numero_solicitud, id_cliente, codigo, fecha_solicitud, nombre_muestra_producto, lote_producto, fecha_vencimiento_producto, tipo_muestra, condiciones_empaque, tipo_analisis_requerido, requiere_varios_analisis, cantidad_muestras_analizar, fecha_estimada_entrega_muestra, puede_suministrar_informacion_adicional, servicio_viable, genero_cotizacion, valor_cotizacion, fecha_envio_oferta, realizo_seguimiento_oferta, observacion_oferta, fecha_limite_entrega_resultados, numero_informe_resultados, fecha_envio_resultados, cliente_respondio_encuesta, solicito_nueva_encuesta, observaciones_generales, mes_solicitud)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         numeroSol,
-        b.id_usuario,
+        b.id_cliente,
         b.codigo || null,
         b.fecha_solicitud || null,
         b.nombre_muestra_producto || null,
@@ -199,12 +199,12 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Get single solicitud with usuario
+// Get single solicitud with cliente
 router.get('/:id', async (req, res) => {
   const id = req.params.id;
   try {
     const [rows] = await pool.query(
-      `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN usuarios u ON s.id_usuario = u.id_usuario WHERE s.id_solicitud = ?`,
+      `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN clientes u ON s.id_cliente = u.id_cliente WHERE s.id_solicitud = ?`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ message: 'Not found' });
