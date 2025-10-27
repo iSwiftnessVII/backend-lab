@@ -3,34 +3,26 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const pool = require('../db');
 
-// Register
-router.post('/register', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Falta correo o contraseña' });
-  try {
-  const [rows] = await pool.query('SELECT id FROM `login` WHERE email = ?', [email]);
-    if (rows.length) return res.status(409).json({ message: 'El usuario ya existe' });
-    const hash = await bcrypt.hash(password, 10);
-  const [result] = await pool.query('INSERT INTO `login` (email, password_hash) VALUES (?, ?)', [email, hash]);
-    const userId = result.insertId;
-    res.json({ id: userId, email });
-  } catch (err) {
-    console.error('Register error', err);
-    res.status(500).json({ message: 'Error interno del servidor' });
-  }
-});
-
 // Login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Falta correo o contraseña' });
+  const { email, contrasena } = req.body;
+  if (!email || !contrasena)
+    return res.status(400).json({ message: 'Falta correo o contraseña' });
+
   try {
-  const [rows] = await pool.query('SELECT id, password_hash FROM `login` WHERE email = ?', [email]);
-    if (!rows.length) return res.status(401).json({ message: 'Credenciales inválidas' });
+    const [rows] = await pool.query(
+      'SELECT id_usuario, contrasena FROM usuarios WHERE email = ?',
+      [email]
+    );
+    if (!rows.length)
+      return res.status(401).json({ message: 'Credenciales inválidas' });
     const user = rows[0];
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ message: 'Credenciales inválidas' });
-    res.json({ id: user.id, email });
+    const ok = await bcrypt.compare(contrasena, user.contrasena);
+
+    if (!ok)
+      return res.status(401).json({ message: 'Credenciales inválidas' });
+
+    res.json({ id_usuario: user.id_usuario, email });
   } catch (err) {
     console.error('Login error', err);
     res.status(500).json({ message: 'Error interno del servidor' });

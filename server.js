@@ -13,6 +13,7 @@ const authRoutes = require('./src/routes/auth');
 const solicitudesRoutes = require('./src/routes/solicitudes');
 const reactivosRoutes = require('./src/routes/reactivos');
 const insumosRoutes = require('./src/routes/insumos');
+const usuariosRoutes = require('./src/routes/usuarios');
 
 
 
@@ -27,6 +28,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/solicitudes', solicitudesRoutes);
 app.use('/api/reactivos', reactivosRoutes);
 app.use('/api/insumos', insumosRoutes);
+app.use('/api/usuarios', usuariosRoutes);
 
 app.get('/', (req, res) => {
   res.type('text/plain').send('Hello from app-lab-back (express)!');
