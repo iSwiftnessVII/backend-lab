@@ -171,6 +171,15 @@ router.post('/catalogo/:codigo/hoja-seguridad', upload.single('file'), async (re
   const { codigo } = req.params;
   const file = req.file;
   if (!file) return res.status(400).json({ message: 'Archivo requerido' });
+  // Validate it's a PDF (mimetype or name) and that buffer starts with PDF magic bytes
+  const name = file.originalname || '';
+  const mimetype = file.mimetype || '';
+  if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
+  if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
   try {
     await pool.query(
       `INSERT INTO hoja_seguridad (codigo, hoja_seguridad, contenido_pdf)
@@ -228,6 +237,15 @@ router.post('/catalogo/:codigo/cert-analisis', upload.single('file'), async (req
   const { codigo } = req.params;
   const file = req.file;
   if (!file) return res.status(400).json({ message: 'Archivo requerido' });
+  // Validate it's a PDF (mimetype or name) and that buffer starts with PDF magic bytes
+  const name = file.originalname || '';
+  const mimetype = file.mimetype || '';
+  if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
+  if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
   try {
     await pool.query(
       `INSERT INTO cert_analisis (codigo, certificado_analisis, contenido_pdf)
