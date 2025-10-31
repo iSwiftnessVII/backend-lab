@@ -38,6 +38,12 @@ router.post('/catalogo/:codigo/hoja-seguridad', upload.single('file'), reactivos
 // DELETE - CON VERIFYTOKEN
 router.delete('/catalogo/:codigo/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridad);
 
+// Por LOTE
+router.get('/:lote/hoja-seguridad', reactivosController.getHojaSeguridadByLote);
+router.get('/:lote/hoja-seguridad/view', reactivosController.viewHojaSeguridadByLote);
+router.post('/:lote/hoja-seguridad', upload.single('file'), reactivosController.uploadHojaSeguridadByLote);
+router.delete('/:lote/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridadByLote);
+
 // ========== CERTIFICADO DE ANÁLISIS (PDFs) ==========
 
 // GET availability
@@ -51,6 +57,12 @@ router.post('/catalogo/:codigo/cert-analisis', upload.single('file'), reactivosC
 
 // DELETE - CON VERIFYTOKEN
 router.delete('/catalogo/:codigo/cert-analisis', verifyToken, reactivosController.deleteCertAnalisis);
+
+// Por LOTE
+router.get('/:lote/cert-analisis', reactivosController.getCertAnalisisByLote);
+router.get('/:lote/cert-analisis/view', reactivosController.viewCertAnalisisByLote);
+router.post('/:lote/cert-analisis', upload.single('file'), reactivosController.uploadCertAnalisisByLote);
+router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCertAnalisisByLote);
 
 // ========== REACTIVOS (CRUD) ==========
 

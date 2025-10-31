@@ -155,39 +155,87 @@ const reactivosController = {
 
   // --- PDFs: Hoja de Seguridad ---
 
-  // GET availability
+  // GET availability (por código en catálogo) - consulta por join a lote
   getHojaSeguridad: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT id FROM hoja_seguridad WHERE codigo = ? AND contenido_pdf IS NOT NULL', [codigo]);
+      const [rows] = await pool.query(
+        `SELECT hs.id
+         FROM hoja_seguridad hs
+         JOIN reactivos r ON r.lote = hs.lote
+         WHERE r.codigo = ? AND hs.contenido_pdf IS NOT NULL
+         ORDER BY hs.fecha_subida DESC
+         LIMIT 1`,
+        [codigo]
+      );
       if (!rows.length) return res.status(404).json({ message: 'No encontrada' });
       return res.json({ url: `catalogo/${encodeURIComponent(codigo)}/hoja-seguridad/view` });
     } catch (err) {
-      console.error('Error GET /hoja-seguridad:', err);
+      console.error('Error GET /hoja-seguridad (por codigo):', err);
       res.status(500).json({ message: 'Error consultando hoja de seguridad' });
     }
   },
 
-  // VIEW stream
+  // VIEW stream (por código) - devolver el último PDF asociado a cualquier lote con ese código
   viewHojaSeguridad: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT contenido_pdf FROM hoja_seguridad WHERE codigo = ?', [codigo]);
+      const [rows] = await pool.query(
+        `SELECT hs.contenido_pdf
+         FROM hoja_seguridad hs
+         JOIN reactivos r ON r.lote = hs.lote
+         WHERE r.codigo = ?
+         ORDER BY hs.fecha_subida DESC
+         LIMIT 1`,
+        [codigo]
+      );
       if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
       res.setHeader('Content-Type', 'application/pdf');
       res.send(rows[0].contenido_pdf);
     } catch (err) {
-      console.error('Error VIEW /hoja-seguridad:', err);
+      console.error('Error VIEW /hoja-seguridad (por codigo):', err);
       res.status(500).type('text/plain').send('Error obteniendo PDF');
     }
   },
 
-  // POST upload
+  // POST upload (catálogo) - no soportado con esquema por lote
   uploadHojaSeguridad: async (req, res) => {
-    const { codigo } = req.params;
+    return res.status(400).json({ message: 'Subida por catálogo no soportada. Suba el PDF por lote: /api/reactivos/:lote/hoja-seguridad' });
+  },
+
+  // DELETE (catálogo) - no soportado con esquema por lote
+  deleteHojaSeguridad: async (req, res) => {
+    return res.status(400).json({ message: 'Eliminación por catálogo no soportada. Elimine el PDF por lote: /api/reactivos/:lote/hoja-seguridad' });
+  },
+
+  // --- PDFs por LOTE ---
+  getHojaSeguridadByLote: async (req, res) => {
+    const { lote } = req.params;
+    try {
+      const [rows] = await pool.query('SELECT id FROM hoja_seguridad WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
+      if (!rows.length) return res.status(404).json({ message: 'No encontrada' });
+      return res.json({ url: `${encodeURIComponent(lote)}/hoja-seguridad/view` });
+    } catch (err) {
+      console.error('Error GET /:lote/hoja-seguridad:', err);
+      res.status(500).json({ message: 'Error consultando hoja de seguridad' });
+    }
+  },
+  viewHojaSeguridadByLote: async (req, res) => {
+    const { lote } = req.params;
+    try {
+      const [rows] = await pool.query('SELECT contenido_pdf FROM hoja_seguridad WHERE lote = ?', [lote]);
+      if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.send(rows[0].contenido_pdf);
+    } catch (err) {
+      console.error('Error VIEW /:lote/hoja-seguridad:', err);
+      res.status(500).type('text/plain').send('Error obteniendo PDF');
+    }
+  },
+  uploadHojaSeguridadByLote: async (req, res) => {
+    const { lote } = req.params;
     const file = req.file;
     if (!file) return res.status(400).json({ message: 'Archivo requerido' });
-    
     const name = file.originalname || '';
     const mimetype = file.mimetype || '';
     if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
@@ -196,51 +244,53 @@ const reactivosController = {
     if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
       return res.status(400).json({ message: 'Archivo no es un PDF válido' });
     }
-    
     try {
       await pool.query(
-        `INSERT INTO hoja_seguridad (codigo, hoja_seguridad, contenido_pdf)
+        `INSERT INTO hoja_seguridad (lote, hoja_seguridad, contenido_pdf)
          VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE hoja_seguridad = VALUES(hoja_seguridad), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-        [codigo, file.originalname || 'hoja_seguridad.pdf', file.buffer]
+        [lote, file.originalname || 'hoja_seguridad.pdf', file.buffer]
       );
-      res.status(201).json({ url: `catalogo/${encodeURIComponent(codigo)}/hoja-seguridad/view` });
+      res.status(201).json({ url: `${encodeURIComponent(lote)}/hoja-seguridad/view` });
     } catch (err) {
-      console.error('Error POST /hoja-seguridad:', err);
+      console.error('Error POST /:lote/hoja-seguridad:', err);
       res.status(500).json({ message: 'Error subiendo PDF' });
     }
   },
-
-  // DELETE
-   deleteHojaSeguridad: async (req, res) => {
-    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+  deleteHojaSeguridadByLote: async (req, res) => {
     if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ 
-        message: 'No tienes permisos para eliminar hojas de seguridad. Solo administradores pueden realizar esta acción.' 
-      });
+      return res.status(403).json({ message: 'No tienes permisos para eliminar hojas de seguridad. Solo administradores.' });
     }
-
-    const { codigo } = req.params;
+    const { lote } = req.params;
     try {
-      const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE codigo = ?', [codigo]);
+      const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE lote = ?', [lote]);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrada' });
       res.json({ message: 'Eliminada' });
     } catch (err) {
-      console.error('Error DELETE /hoja-seguridad:', err);
+      console.error('Error DELETE /:lote/hoja-seguridad:', err);
       res.status(500).json({ message: 'Error eliminando PDF' });
     }
   },
 
   // --- PDFs: Certificado de análisis ---
 
+  // Disponibilidad por código (catálogo) usando join
   getCertAnalisis: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT id FROM cert_analisis WHERE codigo = ? AND contenido_pdf IS NOT NULL', [codigo]);
+      const [rows] = await pool.query(
+        `SELECT ca.id
+         FROM cert_analisis ca
+         JOIN reactivos r ON r.lote = ca.lote
+         WHERE r.codigo = ? AND ca.contenido_pdf IS NOT NULL
+         ORDER BY ca.fecha_subida DESC
+         LIMIT 1`,
+        [codigo]
+      );
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       return res.json({ url: `catalogo/${encodeURIComponent(codigo)}/cert-analisis/view` });
     } catch (err) {
-      console.error('Error GET /cert-analisis:', err);
+      console.error('Error GET /cert-analisis (por codigo):', err);
       res.status(500).json({ message: 'Error consultando certificado' });
     }
   },
@@ -248,21 +298,60 @@ const reactivosController = {
   viewCertAnalisis: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT contenido_pdf FROM cert_analisis WHERE codigo = ?', [codigo]);
+      const [rows] = await pool.query(
+        `SELECT ca.contenido_pdf
+         FROM cert_analisis ca
+         JOIN reactivos r ON r.lote = ca.lote
+         WHERE r.codigo = ?
+         ORDER BY ca.fecha_subida DESC
+         LIMIT 1`,
+        [codigo]
+      );
       if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
       res.setHeader('Content-Type', 'application/pdf');
       res.send(rows[0].contenido_pdf);
     } catch (err) {
-      console.error('Error VIEW /cert-analisis:', err);
+      console.error('Error VIEW /cert-analisis (por codigo):', err);
       res.status(500).type('text/plain').send('Error obteniendo PDF');
     }
   },
 
+  // Subida/Eliminación por catálogo no soportadas con esquema por lote
   uploadCertAnalisis: async (req, res) => {
-    const { codigo } = req.params;
+    return res.status(400).json({ message: 'Subida por catálogo no soportada. Suba el PDF por lote: /api/reactivos/:lote/cert-analisis' });
+  },
+  deleteCertAnalisis: async (req, res) => {
+    return res.status(400).json({ message: 'Eliminación por catálogo no soportada. Elimine el PDF por lote: /api/reactivos/:lote/cert-analisis' });
+  },
+
+  // Endpoints por lote
+  getCertAnalisisByLote: async (req, res) => {
+    const { lote } = req.params;
+    try {
+      const [rows] = await pool.query('SELECT id FROM cert_analisis WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
+      if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
+      return res.json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
+    } catch (err) {
+      console.error('Error GET /:lote/cert-analisis:', err);
+      res.status(500).json({ message: 'Error consultando certificado' });
+    }
+  },
+  viewCertAnalisisByLote: async (req, res) => {
+    const { lote } = req.params;
+    try {
+      const [rows] = await pool.query('SELECT contenido_pdf FROM cert_analisis WHERE lote = ?', [lote]);
+      if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.send(rows[0].contenido_pdf);
+    } catch (err) {
+      console.error('Error VIEW /:lote/cert-analisis:', err);
+      res.status(500).type('text/plain').send('Error obteniendo PDF');
+    }
+  },
+  uploadCertAnalisisByLote: async (req, res) => {
+    const { lote } = req.params;
     const file = req.file;
     if (!file) return res.status(400).json({ message: 'Archivo requerido' });
-    
     const name = file.originalname || '';
     const mimetype = file.mimetype || '';
     if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
@@ -271,36 +360,30 @@ const reactivosController = {
     if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
       return res.status(400).json({ message: 'Archivo no es un PDF válido' });
     }
-    
     try {
       await pool.query(
-        `INSERT INTO cert_analisis (codigo, certificado_analisis, contenido_pdf)
+        `INSERT INTO cert_analisis (lote, certificado_analisis, contenido_pdf)
          VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE certificado_analisis = VALUES(certificado_analisis), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-        [codigo, file.originalname || 'cert_analisis.pdf', file.buffer]
+        [lote, file.originalname || 'cert_analisis.pdf', file.buffer]
       );
-      res.status(201).json({ url: `catalogo/${encodeURIComponent(codigo)}/cert-analisis/view` });
+      res.status(201).json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
     } catch (err) {
-      console.error('Error POST /cert-analisis:', err);
+      console.error('Error POST /:lote/cert-analisis:', err);
       res.status(500).json({ message: 'Error subiendo PDF' });
     }
   },
-
-  deleteCertAnalisis: async (req, res) => {
-    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+  deleteCertAnalisisByLote: async (req, res) => {
     if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ 
-        message: 'No tienes permisos para eliminar certificados de análisis. Solo administradores pueden realizar esta acción.' 
-      });
+      return res.status(403).json({ message: 'No tienes permisos para eliminar certificados. Solo administradores.' });
     }
-
-    const { codigo } = req.params;
+    const { lote } = req.params;
     try {
-      const [result] = await pool.query('DELETE FROM cert_analisis WHERE codigo = ?', [codigo]);
+      const [result] = await pool.query('DELETE FROM cert_analisis WHERE lote = ?', [lote]);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
       res.json({ message: 'Eliminado' });
     } catch (err) {
-      console.error('Error DELETE /cert-analisis:', err);
+      console.error('Error DELETE /:lote/cert-analisis:', err);
       res.status(500).json({ message: 'Error eliminando PDF' });
     }
   },
