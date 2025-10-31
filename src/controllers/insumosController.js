@@ -312,7 +312,15 @@ const insumosController = {
   // DELETE /api/insumos/:id
   deleteInsumo: async (req, res) => {
     const { id } = req.params;
+    
     try {
+      // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+      if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ 
+          message: 'No tienes permisos para eliminar insumos. Solo administradores pueden realizar esta acción.' 
+        });
+      }
+
       const [result] = await pool.query('DELETE FROM insumos WHERE id = ?', [id]);
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'No encontrado' });

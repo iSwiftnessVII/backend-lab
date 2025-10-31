@@ -112,6 +112,13 @@ const solicitudesController = {
 
   // Delete cliente
   deleteCliente: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar clientes. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
     const id = req.params.id;
     try {
       await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
@@ -236,7 +243,14 @@ const solicitudesController = {
   },
 
   // Delete solicitud
-  deleteSolicitud: async (req, res) => {
+   deleteSolicitud: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar solicitudes. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
     const id = req.params.id;
     try {
       await pool.query('DELETE FROM Solicitudes WHERE id_solicitud = ?', [id]);

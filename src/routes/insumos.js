@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const insumosController = require('../controllers/insumosController');
+const { verifyToken } = require('../middleware/jwt');
 
 // GET /api/insumos/aux
 router.get('/aux', insumosController.getAux);
@@ -34,6 +35,6 @@ router.post('/', insumosController.createInsumo);
 router.put('/:id', insumosController.updateInsumo);
 
 // DELETE /api/insumos/:id
-router.delete('/:id', insumosController.deleteInsumo);
+router.delete('/:id', verifyToken, insumosController.deleteInsumo);
 
 module.exports = router;

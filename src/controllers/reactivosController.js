@@ -134,6 +134,25 @@ const reactivosController = {
     }
   },
 
+    deleteCatalogo: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar del catálogo. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
+    const { codigo } = req.params;
+    try {
+      const [result] = await pool.query('DELETE FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      res.json({ message: 'Eliminado del catálogo' });
+    } catch (err) {
+      console.error('Error DELETE /catalogo/:codigo:', err);
+      res.status(500).json({ message: 'Error eliminando del catálogo' });
+    }
+  },
+
   // --- PDFs: Hoja de Seguridad ---
 
   // GET availability
@@ -193,7 +212,14 @@ const reactivosController = {
   },
 
   // DELETE
-  deleteHojaSeguridad: async (req, res) => {
+   deleteHojaSeguridad: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar hojas de seguridad. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
     const { codigo } = req.params;
     try {
       const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE codigo = ?', [codigo]);
@@ -261,6 +287,13 @@ const reactivosController = {
   },
 
   deleteCertAnalisis: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar certificados de análisis. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
     const { codigo } = req.params;
     try {
       const [result] = await pool.query('DELETE FROM cert_analisis WHERE codigo = ?', [codigo]);
@@ -430,7 +463,14 @@ const reactivosController = {
   },
 
   // DELETE /api/reactivos/:lote
-  deleteReactivo: async (req, res) => {
+    deleteReactivo: async (req, res) => {
+    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
+    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para eliminar reactivos. Solo administradores pueden realizar esta acción.' 
+      });
+    }
+
     const { lote } = req.params;
     try {
       const [result] = await pool.query('DELETE FROM reactivos WHERE lote = ?', [lote]);
@@ -442,5 +482,6 @@ const reactivosController = {
     }
   }
 };
+
 
 module.exports = reactivosController;

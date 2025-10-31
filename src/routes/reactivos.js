@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const upload = require('../middleware/upload');
 const reactivosController = require('../controllers/reactivosController');
+const { verifyToken } = require('../middleware/jwt'); // Asegúrate de importar verifyToken
 
 // GET /api/reactivos/aux
 router.get('/aux', reactivosController.getAux);
@@ -20,6 +21,9 @@ router.post('/catalogo', reactivosController.createCatalogo);
 // PUT /api/reactivos/catalogo/:codigo
 router.put('/catalogo/:codigo', reactivosController.updateCatalogo);
 
+// DELETE /api/reactivos/catalogo/:codigo - NUEVA RUTA QUE FALTABA
+router.delete('/catalogo/:codigo', verifyToken, reactivosController.deleteCatalogo);
+
 // ========== HOJA DE SEGURIDAD (PDFs) ==========
 
 // GET availability
@@ -31,8 +35,8 @@ router.get('/catalogo/:codigo/hoja-seguridad/view', reactivosController.viewHoja
 // POST upload (CON MULTER)
 router.post('/catalogo/:codigo/hoja-seguridad', upload.single('file'), reactivosController.uploadHojaSeguridad);
 
-// DELETE
-router.delete('/catalogo/:codigo/hoja-seguridad', reactivosController.deleteHojaSeguridad);
+// DELETE - CON VERIFYTOKEN
+router.delete('/catalogo/:codigo/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridad);
 
 // ========== CERTIFICADO DE ANÁLISIS (PDFs) ==========
 
@@ -45,8 +49,8 @@ router.get('/catalogo/:codigo/cert-analisis/view', reactivosController.viewCertA
 // POST upload (CON MULTER)
 router.post('/catalogo/:codigo/cert-analisis', upload.single('file'), reactivosController.uploadCertAnalisis);
 
-// DELETE
-router.delete('/catalogo/:codigo/cert-analisis', reactivosController.deleteCertAnalisis);
+// DELETE - CON VERIFYTOKEN
+router.delete('/catalogo/:codigo/cert-analisis', verifyToken, reactivosController.deleteCertAnalisis);
 
 // ========== REACTIVOS (CRUD) ==========
 
@@ -62,7 +66,7 @@ router.post('/', reactivosController.createReactivo);
 // PUT /api/reactivos/:lote
 router.put('/:lote', reactivosController.updateReactivo);
 
-// DELETE /api/reactivos/:lote
-router.delete('/:lote', reactivosController.deleteReactivo);
+// DELETE /api/reactivos/:lote - CON VERIFYTOKEN
+router.delete('/:lote', verifyToken, reactivosController.deleteReactivo);
 
 module.exports = router;

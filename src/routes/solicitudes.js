@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const solicitudesController = require('../controllers/solicitudesController');
+const { verifyToken } = require('../middleware/jwt');
 
 // ---------- CLIENTES CRUD ----------
 
@@ -17,7 +18,7 @@ router.get('/clientes/:id', solicitudesController.getClienteById);
 router.put('/clientes/:id', solicitudesController.updateCliente);
 
 // Delete cliente
-router.delete('/clientes/:id', solicitudesController.deleteCliente);
+router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente);
 
 // ---------- SOLICITUDES CRUD ----------
 
@@ -34,7 +35,7 @@ router.get('/:id', solicitudesController.getSolicitudById);
 router.put('/:id', solicitudesController.updateSolicitud);
 
 // Delete solicitud
-router.delete('/:id', solicitudesController.deleteSolicitud);
+router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
 
 // Create encuesta
 router.post('/encuestas', solicitudesController.createEncuesta);
