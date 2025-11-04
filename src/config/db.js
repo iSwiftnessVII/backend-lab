@@ -13,7 +13,8 @@ try {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    port: process.env.PORT ? parseInt(process.env.PORT, 10) : 4000,
+    // IMPORTANT: use a dedicated DB port env (DB_PORT) and do NOT reuse PORT (server port)
+    port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 4000,
     ssl: {
       ca: fs.readFileSync(path.join(__dirname, "certs", "ca.pem")),
     },

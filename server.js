@@ -8,6 +8,7 @@ const authRoutes = require('./src/routes/auth');
 const solicitudesRoutes = require('./src/routes/solicitudes');
 const reactivosRoutes = require('./src/routes/reactivos');
 const insumosRoutes = require('./src/routes/insumos');
+const papeleriaRoutes = require('./src/routes/papeleria');
 const usuariosRoutes = require('./src/routes/usuarios');
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/solicitudes', solicitudesRoutes);
 app.use('/api/reactivos', reactivosRoutes);
 app.use('/api/insumos', insumosRoutes);
+app.use('/api/papeleria', papeleriaRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 
 app.get('/', (req, res) => {
