@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const insumosController = require('../controllers/insumosController');
+const upload = require('../middleware/upload');
+const uploadImage = require('../middleware/uploadImage');
 const { verifyToken } = require('../middleware/jwt');
 
 // GET /api/insumos/aux
@@ -14,11 +16,14 @@ router.get('/catalogo', insumosController.getCatalogo);
 // GET /api/insumos/catalogo/:item
 router.get('/catalogo/:item', insumosController.getCatalogoItem);
 
-// POST /api/insumos/catalogo
-router.post('/catalogo', insumosController.createCatalogo);
+// POST /api/insumos/catalogo (multipart con 'imagen')
+router.post('/catalogo', uploadImage.single('imagen'), insumosController.createCatalogo);
 
-// PUT /api/insumos/catalogo/:item
-router.put('/catalogo/:item', insumosController.updateCatalogo);
+// PUT /api/insumos/catalogo/:item (multipart opcional 'imagen')
+router.put('/catalogo/:item', uploadImage.single('imagen'), insumosController.updateCatalogo);
+
+// GET imagen del catálogo
+router.get('/catalogo/:item/imagen', insumosController.getCatalogoItemImagen);
 
 // ========== INSUMOS (CRUD) ==========
 

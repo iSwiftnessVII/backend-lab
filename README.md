@@ -41,3 +41,25 @@ nvm install 24.9.0
 nvm use 24.9.0
 node -v
 ```
+
+## DB setup for Insumos and Catálogo
+
+Run the SQL script to create the new tables for insumos and catalogo_insumos (manual numeric Item and optional image):
+
+- File: `src/db/db_insumos.sql`
+
+How to apply (example via MySQL CLI):
+
+```powershell
+# Replace with your connection values
+mysql -h $env:HOST -u $env:DB_USER -p$env:DB_PASSWORD < .\src\db\db_insumos.sql
+```
+
+Notes
+- The column `catalogo_insumos.imagen` is defined as MEDIUMBLOB to allow images up to ~16MB. The API caps uploads at 5MB; if your existing column is BLOB, run this ALTER to avoid ER_DATA_TOO_LONG:
+
+```sql
+ALTER TABLE catalogo_insumos MODIFY imagen MEDIUMBLOB NULL;
+```
+
+- Ensure the backend is using the intended database (`DB_NAME`) in your environment. The scripts default to `lab`.

@@ -36,9 +36,9 @@ const insumosController = {
     if (limit > 500) limit = 500;
 
     try {
-      const baseSelect = 'SELECT item, nombre, descripcion FROM catalogo_insumos';
-      const where = q ? ' WHERE LOWER(item) LIKE ? OR LOWER(nombre) LIKE ?' : '';
-      const order = ' ORDER BY item';
+  const baseSelect = 'SELECT item, nombre, descripcion FROM catalogo_insumos';
+  const where = q ? ' WHERE CAST(item AS CHAR) LIKE ? OR LOWER(nombre) LIKE ?' : '';
+  const order = ' ORDER BY item DESC';
 
       if (limit > 0) {
         const countQuery = `SELECT COUNT(*) as total FROM catalogo_insumos${where}`;
@@ -102,44 +102,78 @@ const insumosController = {
     }
   },
 
-  // POST /api/insumos/catalogo
+  // GET /api/insumos/catalogo/:item/imagen
+  getCatalogoItemImagen: async (req, res) => {
+    const { item } = req.params;
+    try {
+      const [rows] = await pool.query('SELECT imagen FROM catalogo_insumos WHERE item = ?', [item]);
+      if (!rows.length) return res.status(404).send('No encontrado');
+      const img = rows[0]?.imagen;
+      if (!img) return res.status(204).end(); // sin contenido
+      res.setHeader('Content-Type', 'image/jpeg'); // suposición: puede venir cualquier mimetype; ajustar si se guarda tipo
+      res.send(img);
+    } catch (err) {
+      console.error('Error GET /catalogo/:item/imagen:', err);
+      res.status(500).send('Error obteniendo imagen');
+    }
+  },
+
+  // POST /api/insumos/catalogo (multipart) - item requerido (sin AUTO_INCREMENT)
   createCatalogo: async (req, res) => {
     const { item, nombre, descripcion } = req.body || {};
+    const imagenBuffer = req.file?.buffer || null;
     
     if (!item || !nombre) {
       return res.status(400).json({ message: 'Item y nombre son requeridos' });
     }
+    const itemNum = parseInt(item, 10);
+    if (Number.isNaN(itemNum)) {
+      return res.status(400).json({ message: 'El item debe ser numérico' });
+    }
     
     try {
       await pool.query(
-        'INSERT INTO catalogo_insumos (item, nombre, descripcion) VALUES (?, ?, ?)',
-        [item, nombre, descripcion || null]
+        'INSERT INTO catalogo_insumos (item, nombre, descripcion, imagen) VALUES (?, ?, ?, ?)',
+        [itemNum, nombre, descripcion || null, imagenBuffer]
       );
-      res.status(201).json({ item, nombre, descripcion: descripcion || null });
+      return res.status(201).json({ item: itemNum, nombre, descripcion: descripcion || null });
     } catch (err) {
+      if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
+        return res.status(413).json({ message: 'Imagen demasiado grande para la columna. Aumenta el tipo a MEDIUMBLOB o reduce el tamaño (<5MB).' });
+      }
       if (err && err.code === 'ER_DUP_ENTRY') {
-        return res.status(409).json({ message: 'Item ya existe en catálogo' });
+        return res.status(409).json({ message: 'El item ya existe en catálogo' });
       }
       console.error('Error POST /catalogo:', err);
       res.status(500).json({ message: 'Error creando catálogo' });
     }
   },
 
-  // PUT /api/insumos/catalogo/:item
+  // PUT /api/insumos/catalogo/:item (multipart opcional 'imagen')
   updateCatalogo: async (req, res) => {
     const { item } = req.params;
     const { nombre, descripcion } = req.body || {};
+    const imagenBuffer = req.file?.buffer;
     
     try {
-      const [result] = await pool.query(
-        'UPDATE catalogo_insumos SET nombre = ?, descripcion = ? WHERE item = ?',
-        [nombre || null, descripcion || null, item]
-      );
+      let query = 'UPDATE catalogo_insumos SET nombre = ?, descripcion = ?';
+      const params = [nombre || null, descripcion || null];
+      if (imagenBuffer) {
+        query += ', imagen = ?';
+        params.push(imagenBuffer);
+      }
+      query += ' WHERE item = ?';
+      params.push(item);
+
+      const [result] = await pool.query(query, params);
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
       res.json({ item, nombre: nombre || null, descripcion: descripcion || null });
     } catch (err) {
+      if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
+        return res.status(413).json({ message: 'Imagen demasiado grande para la columna. Aumenta el tipo a MEDIUMBLOB o reduce el tamaño (<5MB).' });
+      }
       console.error('Error PUT /catalogo/:item:', err);
       res.status(500).json({ message: 'Error actualizando catálogo' });
     }
@@ -171,7 +205,7 @@ const insumosController = {
 
       const searchQuery = `
         SELECT * FROM insumos
-        WHERE LOWER(item) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?
+        WHERE CAST(item_catalogo AS CHAR) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?
         ORDER BY id DESC
       `;
 
@@ -212,39 +246,39 @@ const insumosController = {
   // POST /api/insumos
   createInsumo: async (req, res) => {
     let {
-      item,
+      item_catalogo,
       nombre,
       cantidad_adquirida,
       cantidad_existente,
       presentacion,
       marca,
+      referencia,
       descripcion,
       fecha_adquisicion,
       ubicacion,
       observaciones
     } = req.body || {};
 
-    if (!item || !nombre || cantidad_adquirida == null || cantidad_existente == null) {
+    if (!item_catalogo || !nombre || cantidad_adquirida == null || cantidad_existente == null) {
       return res.status(400).json({ 
-        message: 'Faltan campos requeridos: item, nombre, cantidad_adquirida, cantidad_existente' 
+        message: 'Faltan campos requeridos: item_catalogo, nombre, cantidad_adquirida, cantidad_existente' 
       });
     }
-
-    item = String(item);
 
     try {
       await pool.query(
         `INSERT INTO insumos (
-          item, nombre, cantidad_adquirida, cantidad_existente, 
-          presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          item_catalogo, nombre, cantidad_adquirida, cantidad_existente, 
+          presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          item,
+          item_catalogo,
           nombre,
           cantidad_adquirida,
           cantidad_existente,
           presentacion || null,
           marca || null,
+          referencia || null,
           descripcion || null,
           fecha_adquisicion || null,
           ubicacion || null,
@@ -253,9 +287,6 @@ const insumosController = {
       );
       res.status(201).json({ message: 'Insumo creado correctamente' });
     } catch (err) {
-      if (err && err.code === 'ER_DUP_ENTRY') {
-        return res.status(409).json({ message: 'El insumo ya existe' });
-      }
       console.error('Error POST / (insumos):', err);
       res.status(500).json({ message: 'Error creando insumo' });
     }
@@ -265,12 +296,13 @@ const insumosController = {
   updateInsumo: async (req, res) => {
     const { id } = req.params;
     const {
-      item,
+      item_catalogo,
       nombre,
       cantidad_adquirida,
       cantidad_existente,
       presentacion,
       marca,
+      referencia,
       descripcion,
       fecha_adquisicion,
       ubicacion,
@@ -280,17 +312,18 @@ const insumosController = {
     try {
       const [result] = await pool.query(
         `UPDATE insumos SET
-          item = ?, nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?,
-          presentacion = ?, marca = ?, descripcion = ?, fecha_adquisicion = ?,
+          item_catalogo = ?, nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?,
+          presentacion = ?, marca = ?, referencia = ?, descripcion = ?, fecha_adquisicion = ?,
           ubicacion = ?, observaciones = ?
         WHERE id = ?`,
         [
-          item,
+          item_catalogo,
           nombre,
           cantidad_adquirida,
           cantidad_existente,
           presentacion || null,
           marca || null,
+          referencia || null,
           descripcion || null,
           fecha_adquisicion || null,
           ubicacion || null,
