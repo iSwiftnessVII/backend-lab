@@ -367,3 +367,39 @@ const insumosController = {
 };
 
 module.exports = insumosController;
+// PATCH /api/insumos/:id/existencias
+insumosController.ajustarExistencias = async (req, res) => {
+  const { id } = req.params;
+  const { delta, cantidad } = req.body || {};
+
+  try {
+    if (typeof cantidad !== 'undefined') {
+      const c = Number(cantidad);
+      if (!Number.isFinite(c) || c < 0) {
+        return res.status(400).json({ message: 'Cantidad inválida. Debe ser >= 0' });
+      }
+      const [result] = await pool.query(
+        'UPDATE insumos SET cantidad_existente = ? WHERE id = ?',[c, id]
+      );
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+    } else if (typeof delta !== 'undefined') {
+      const d = Number(delta);
+      if (!Number.isFinite(d) || d === 0) {
+        return res.status(400).json({ message: 'Delta inválido. Debe ser distinto de 0' });
+      }
+      const [result] = await pool.query(
+        'UPDATE insumos SET cantidad_existente = GREATEST(0, cantidad_existente + ?) WHERE id = ?', [d, id]
+      );
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+    } else {
+      return res.status(400).json({ message: 'Provee cantidad (>=0) o delta (!=0)' });
+    }
+
+    const [rows] = await pool.query('SELECT cantidad_existente FROM insumos WHERE id = ?', [id]);
+    const nuevo = rows[0]?.cantidad_existente;
+    return res.json({ id, cantidad_existente: nuevo });
+  } catch (err) {
+    console.error('Error PATCH /:id/existencias (insumos):', err);
+    res.status(500).json({ message: 'Error ajustando existencias' });
+  }
+};

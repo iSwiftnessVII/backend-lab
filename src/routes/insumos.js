@@ -39,6 +39,9 @@ router.post('/', insumosController.createInsumo);
 // PUT /api/insumos/:id
 router.put('/:id', insumosController.updateInsumo);
 
+// PATCH existencias: ajustar cantidad existente absoluta o por delta
+router.patch('/:id/existencias', insumosController.ajustarExistencias);
+
 // DELETE /api/insumos/:id
 router.delete('/:id', verifyToken, insumosController.deleteInsumo);
 
