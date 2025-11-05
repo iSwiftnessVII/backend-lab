@@ -10,6 +10,7 @@ const reactivosRoutes = require('./src/routes/reactivos');
 const insumosRoutes = require('./src/routes/insumos');
 const papeleriaRoutes = require('./src/routes/papeleria');
 const usuariosRoutes = require('./src/routes/usuarios');
+const equiposRoutes = require('./src/routes/equipos');
 
 const app = express();
 const port = process.env.PORT || 4000; 
@@ -34,6 +35,7 @@ app.use('/api/reactivos', reactivosRoutes);
 app.use('/api/insumos', insumosRoutes);
 app.use('/api/papeleria', papeleriaRoutes);
 app.use('/api/usuarios', usuariosRoutes);
+app.use('/api/equipos', equiposRoutes);
 
 app.get('/', (req, res) => {
   res.type('text/plain').send('Hello from app-lab-back (express)!');
