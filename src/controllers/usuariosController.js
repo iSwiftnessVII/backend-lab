@@ -158,7 +158,7 @@ const usuariosController = {
       res.json({ message: 'Usuario eliminado correctamente' });
     } catch (err) {
       console.error('Error DELETE /eliminar/:id:', err);
-      
+
       // Manejar error de foreign key constraint
       if (err.code === 'ER_ROW_IS_REFERENCED_2') {
         return res.status(400).json({
@@ -168,7 +168,64 @@ const usuariosController = {
 
       res.status(500).json({ message: 'Error eliminando usuario' });
     }
-  }
+  },
+
+  /* PATCH /api/usuarios/rol/:id - Cambiar rol de usuario */
+  cambiarRol: async (req, res) => {
+    const { id } = req.params;
+    const { rol_id } = req.body || {};
+
+    // VERIFICACIÓN POR ROL - Solo Superadmin puede cambiar roles
+    if (req.user.rol !== 'Superadmin') {
+      return res.status(403).json({
+        message: 'No tienes permisos para cambiar roles. Solo el Superadmin puede realizar esta acción.'
+      });
+    }
+
+    // Validaciones
+    if (!rol_id) {
+      return res.status(400).json({
+        message: 'El rol_id es requerido'
+      });
+    }
+
+    try {
+      // Verificar que el usuario existe
+      const [userCheck] = await pool.query(
+        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        [id]
+      );
+
+      if (!userCheck.length) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+
+      // Verificar que el rol existe
+      const [roleCheck] = await pool.query(
+        'SELECT id_rol FROM roles WHERE id_rol = ?',
+        [rol_id]
+      );
+
+      if (!roleCheck.length) {
+        return res.status(400).json({ message: 'Rol no válido' });
+      }
+
+      // Actualizar el rol del usuario
+      await pool.query(
+        'UPDATE usuarios SET rol_id = ? WHERE id_usuario = ?',
+        [rol_id, id]
+      );
+
+      res.json({
+        message: 'Rol actualizado correctamente',
+        id_usuario: parseInt(id),
+        nuevo_rol_id: parseInt(rol_id)
+      });
+    } catch (err) {
+      console.error('Error PATCH /rol/:id:', err);
+      res.status(500).json({ message: 'Error cambiando rol' });
+    }
+  },
 };
 
 module.exports = usuariosController;
