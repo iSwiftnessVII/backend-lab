@@ -29,4 +29,29 @@ try {
   process.exit(1);
 }
 
+// Auto-create materiales_volumetricos table if missing (idempotent)
+(async () => {
+  try {
+    const createSql = `CREATE TABLE IF NOT EXISTS materiales_volumetricos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      item INT NOT NULL,
+      nombre_material VARCHAR(100) NOT NULL,
+      clase VARCHAR(100),
+      marca VARCHAR(100),
+      referencia VARCHAR(100),
+      fecha_adquisicion DATE,
+      cantidad INT,
+      codigo_calibrado VARCHAR(100),
+      fecha_calibracion DATE,
+      codigo_en_uso VARCHAR(100),
+      codigo_fuera_de_uso VARCHAR(100),
+      observaciones TEXT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`;
+    await pool.query(createSql);
+    console.log('[DB] Tabla materiales_volumetricos verificada/creada');
+  } catch (e) {
+    console.error('[DB] Error creando/verificando tabla materiales_volumetricos:', e.message);
+  }
+})();
+
 module.exports = pool;

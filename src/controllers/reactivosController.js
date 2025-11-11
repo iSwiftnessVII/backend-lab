@@ -134,7 +134,7 @@ const reactivosController = {
     }
   },
 
-    deleteCatalogo: async (req, res) => {
+  deleteCatalogo: async (req, res) => {
     // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
     if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
       return res.status(403).json({ 
@@ -144,10 +144,27 @@ const reactivosController = {
 
     const { codigo } = req.params;
     try {
+      // Pre-chequeo: evitar violar FK si existen reactivos con ese código
+      const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM reactivos WHERE codigo = ?', [codigo]);
+      const cnt = rows?.[0]?.cnt || 0;
+      if (cnt > 0) {
+        return res.status(409).json({
+          message: `No se puede eliminar del catálogo: existen ${cnt} reactivo(s) que referencian este código` ,
+          codigo,
+          dependientes: cnt
+        });
+      }
+
       const [result] = await pool.query('DELETE FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
       res.json({ message: 'Eliminado del catálogo' });
     } catch (err) {
+      if (err && err.code === 'ER_ROW_IS_REFERENCED_2') {
+        return res.status(409).json({
+          message: 'No se puede eliminar del catálogo: hay registros que dependen de este código',
+          codigo
+        });
+      }
       console.error('Error DELETE /catalogo/:codigo:', err);
       res.status(500).json({ message: 'Error eliminando del catálogo' });
     }

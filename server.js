@@ -12,6 +12,7 @@ const papeleriaRoutes = require('./src/routes/papeleria');
 const usuariosRoutes = require('./src/routes/usuarios');
 const equiposRoutes = require('./src/routes/equipos');
 const dashboardRoutes = require('./src/routes/dashboard');
+const materialesVolRoutes = require('./src/routes/materialesVolumetricos');
 
 const app = express();
 const port = process.env.PORT || 4000; 
@@ -38,6 +39,7 @@ app.use('/api/papeleria', papeleriaRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/equipos', equiposRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/materiales-volumetricos', materialesVolRoutes);
 
 app.get('/', (req, res) => {
   res.type('text/plain').send('Hello from app-lab-back (express)!');
