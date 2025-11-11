@@ -9,6 +9,7 @@ router.get('/catalogo', papeleriaController.getCatalogo);
 router.get('/catalogo/:item', papeleriaController.getCatalogoItem);
 router.get('/catalogo/:item/imagen', papeleriaController.getCatalogoItemImagen);
 router.post('/catalogo', uploadImage.single('imagen'), papeleriaController.createCatalogo);
+router.delete('/catalogo/:item', verifyToken, papeleriaController.deleteCatalogo);
 
 // Inventario de papelería
 router.get('/', papeleriaController.getPapeleria);

@@ -22,6 +22,9 @@ router.post('/catalogo', uploadImage.single('imagen'), insumosController.createC
 // PUT /api/insumos/catalogo/:item (multipart opcional 'imagen')
 router.put('/catalogo/:item', uploadImage.single('imagen'), insumosController.updateCatalogo);
 
+// DELETE /api/insumos/catalogo/:item
+router.delete('/catalogo/:item', verifyToken, insumosController.deleteCatalogo);
+
 // GET imagen del catálogo
 router.get('/catalogo/:item/imagen', insumosController.getCatalogoItemImagen);
 

@@ -48,7 +48,7 @@ const papeleriaController = {
   async getCatalogoItem(req, res) {
     const { item } = req.params;
     try {
-      const [rows] = await pool.query('SELECT item, nombre, descripcion FROM catalogo_papeleria WHERE item=?', [item]);
+      const [rows] = await pool.query('SELECT item, nombre, descripcion FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       res.json(rows[0]);
     } catch (err) { console.error(err); res.status(500).json({ message: 'Error' }); }
@@ -57,7 +57,7 @@ const papeleriaController = {
   async getCatalogoItemImagen(req, res) {
     const { item } = req.params;
     try {
-      const [rows] = await pool.query('SELECT imagen FROM catalogo_papeleria WHERE item=?', [item]);
+      const [rows] = await pool.query('SELECT imagen FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
       if (!rows.length) return res.status(404).send('No encontrado');
       const img = rows[0]?.imagen;
       if (!img) return res.status(204).end();
@@ -81,6 +81,32 @@ const papeleriaController = {
       }
       if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'El item ya existe en catálogo' });
       console.error(err); res.status(500).json({ message: 'Error creando catálogo' });
+    }
+  },
+
+  async deleteCatalogo(req, res) {
+    const { item } = req.params;
+    try {
+      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ message: 'No tienes permisos para eliminar. Solo administradores.' });
+      }
+      // Pre-check con equivalencia numérica
+      const [existRows] = await pool.query('SELECT COUNT(*) AS cnt FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
+      const exists = (existRows && existRows[0] && Number(existRows[0].cnt)) || 0;
+      console.log('[PRECHECK DELETE catalogo_papeleria] item =', item, 'exists =', exists);
+      if (!exists) return res.status(404).json({ message: `No encontrado en catálogo (item: ${item})` });
+
+      // Borrar por equivalencia numérica
+      const [result] = await pool.query('DELETE FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
+      console.log('[DELETE catalogo_papeleria] item =', item, 'affectedRows =', result.affectedRows);
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      res.json({ deleted: result.affectedRows, message: 'Item de catálogo eliminado correctamente' });
+    } catch (err) {
+      if (err && (err.code === 'ER_ROW_IS_REFERENCED_2' || err.code === 'ER_ROW_IS_REFERENCED' || err.errno === 1451)) {
+        return res.status(409).json({ message: 'No se puede eliminar: existen registros de papelería que usan este item de catálogo.' });
+      }
+      console.error('Error DELETE /catalogo/:item (papeleria):', err);
+      res.status(500).json({ message: 'Error eliminando item de catálogo' });
     }
   },
 

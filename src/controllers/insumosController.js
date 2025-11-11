@@ -91,7 +91,7 @@ const insumosController = {
     const { item } = req.params;
     try {
       const [rows] = await pool.query(
-        'SELECT item, nombre, descripcion FROM catalogo_insumos WHERE item = ?',
+        'SELECT item, nombre, descripcion FROM catalogo_insumos WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)',
         [item]
       );
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
@@ -106,7 +106,7 @@ const insumosController = {
   getCatalogoItemImagen: async (req, res) => {
     const { item } = req.params;
     try {
-      const [rows] = await pool.query('SELECT imagen FROM catalogo_insumos WHERE item = ?', [item]);
+      const [rows] = await pool.query('SELECT imagen FROM catalogo_insumos WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
       if (!rows.length) return res.status(404).send('No encontrado');
       const img = rows[0]?.imagen;
       if (!img) return res.status(204).end(); // sin contenido
@@ -162,7 +162,7 @@ const insumosController = {
         query += ', imagen = ?';
         params.push(imagenBuffer);
       }
-      query += ' WHERE item = ?';
+      query += ' WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)';
       params.push(item);
 
       const [result] = await pool.query(query, params);
@@ -176,6 +176,41 @@ const insumosController = {
       }
       console.error('Error PUT /catalogo/:item:', err);
       res.status(500).json({ message: 'Error actualizando catálogo' });
+    }
+  },
+
+  // DELETE /api/insumos/catalogo/:item
+  deleteCatalogo: async (req, res) => {
+    const { item } = req.params;
+    try {
+      // Permisos: solo Admin/Superadmin
+      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ message: 'No tienes permisos para eliminar. Solo administradores.' });
+      }
+      // Pre-check: verificar existencia por equivalencia numérica (soporta '001' vs 1)
+      const [existRows] = await pool.query(
+        'SELECT COUNT(*) AS cnt FROM catalogo_insumos WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)',
+        [item]
+      );
+      const exists = (existRows && existRows[0] && Number(existRows[0].cnt)) || 0;
+      console.log('[PRECHECK DELETE catalogo_insumos] item =', item, 'exists =', exists);
+      if (!exists) return res.status(404).json({ message: `No encontrado en catálogo (item: ${item})` });
+
+      // Borrar todos los registros que coincidan por equivalencia numérica
+      const [result] = await pool.query(
+        'DELETE FROM catalogo_insumos WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)',
+        [item]
+      );
+      console.log('[DELETE catalogo_insumos] item =', item, 'affectedRows =', result.affectedRows);
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      res.json({ deleted: result.affectedRows, message: 'Item de catálogo eliminado correctamente' });
+    } catch (err) {
+      // Manejar error por restricción de llave foránea (hay insumos usando este item)
+      if (err && (err.code === 'ER_ROW_IS_REFERENCED_2' || err.code === 'ER_ROW_IS_REFERENCED' || err.errno === 1451)) {
+        return res.status(409).json({ message: 'No se puede eliminar: existen insumos que usan este item de catálogo.' });
+      }
+      console.error('Error DELETE /catalogo/:item (insumos):', err);
+      res.status(500).json({ message: 'Error eliminando item de catálogo' });
     }
   },
 
