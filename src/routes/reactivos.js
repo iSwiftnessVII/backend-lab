@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const upload = require('../middleware/upload');
 const reactivosController = require('../controllers/reactivosController');
-const { verifyToken } = require('../middleware/jwt'); // Asegúrate de importar verifyToken
+const { verifyToken } = require('../middleware/jwt');
 
 // GET /api/reactivos/aux
 router.get('/aux', reactivosController.getAux);
@@ -15,13 +15,13 @@ router.get('/catalogo', reactivosController.getCatalogo);
 // GET /api/reactivos/catalogo/:codigo
 router.get('/catalogo/:codigo', reactivosController.getCatalogoItem);
 
-// POST /api/reactivos/catalogo
-router.post('/catalogo', reactivosController.createCatalogo);
+// POST /api/reactivos/catalogo - CON AUTENTICACIÓN
+router.post('/catalogo', verifyToken, reactivosController.createCatalogo);
 
-// PUT /api/reactivos/catalogo/:codigo
-router.put('/catalogo/:codigo', reactivosController.updateCatalogo);
+// PUT /api/reactivos/catalogo/:codigo - CON AUTENTICACIÓN
+router.put('/catalogo/:codigo', verifyToken, reactivosController.updateCatalogo);
 
-// DELETE /api/reactivos/catalogo/:codigo - NUEVA RUTA QUE FALTABA
+// DELETE /api/reactivos/catalogo/:codigo - CON AUTENTICACIÓN
 router.delete('/catalogo/:codigo', verifyToken, reactivosController.deleteCatalogo);
 
 // ========== HOJA DE SEGURIDAD (PDFs) ==========
@@ -32,16 +32,20 @@ router.get('/catalogo/:codigo/hoja-seguridad', reactivosController.getHojaSeguri
 // VIEW stream
 router.get('/catalogo/:codigo/hoja-seguridad/view', reactivosController.viewHojaSeguridad);
 
-// POST upload (CON MULTER)
-router.post('/catalogo/:codigo/hoja-seguridad', upload.single('file'), reactivosController.uploadHojaSeguridad);
+// POST upload (CON MULTER) - CON AUTENTICACIÓN
+router.post('/catalogo/:codigo/hoja-seguridad', verifyToken, upload.single('file'), reactivosController.uploadHojaSeguridad);
 
-// DELETE - CON VERIFYTOKEN
+// DELETE - CON AUTENTICACIÓN
 router.delete('/catalogo/:codigo/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridad);
 
 // Por LOTE
 router.get('/:lote/hoja-seguridad', reactivosController.getHojaSeguridadByLote);
 router.get('/:lote/hoja-seguridad/view', reactivosController.viewHojaSeguridadByLote);
-router.post('/:lote/hoja-seguridad', upload.single('file'), reactivosController.uploadHojaSeguridadByLote);
+
+// POST upload por lote - CON AUTENTICACIÓN
+router.post('/:lote/hoja-seguridad', verifyToken, upload.single('file'), reactivosController.uploadHojaSeguridadByLote);
+
+// DELETE por lote - CON AUTENTICACIÓN
 router.delete('/:lote/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridadByLote);
 
 // ========== CERTIFICADO DE ANÁLISIS (PDFs) ==========
@@ -52,16 +56,20 @@ router.get('/catalogo/:codigo/cert-analisis', reactivosController.getCertAnalisi
 // VIEW stream
 router.get('/catalogo/:codigo/cert-analisis/view', reactivosController.viewCertAnalisis);
 
-// POST upload (CON MULTER)
-router.post('/catalogo/:codigo/cert-analisis', upload.single('file'), reactivosController.uploadCertAnalisis);
+// POST upload (CON MULTER) - CON AUTENTICACIÓN
+router.post('/catalogo/:codigo/cert-analisis', verifyToken, upload.single('file'), reactivosController.uploadCertAnalisis);
 
-// DELETE - CON VERIFYTOKEN
+// DELETE - CON AUTENTICACIÓN
 router.delete('/catalogo/:codigo/cert-analisis', verifyToken, reactivosController.deleteCertAnalisis);
 
 // Por LOTE
 router.get('/:lote/cert-analisis', reactivosController.getCertAnalisisByLote);
 router.get('/:lote/cert-analisis/view', reactivosController.viewCertAnalisisByLote);
-router.post('/:lote/cert-analisis', upload.single('file'), reactivosController.uploadCertAnalisisByLote);
+
+// POST upload por lote - CON AUTENTICACIÓN
+router.post('/:lote/cert-analisis', verifyToken, upload.single('file'), reactivosController.uploadCertAnalisisByLote);
+
+// DELETE por lote - CON AUTENTICACIÓN
 router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCertAnalisisByLote);
 
 // ========== REACTIVOS (CRUD) ==========
@@ -72,13 +80,13 @@ router.get('/', reactivosController.getReactivos);
 // GET /api/reactivos/:lote
 router.get('/:lote', reactivosController.getReactivoByLote);
 
-// POST /api/reactivos
-router.post('/', reactivosController.createReactivo);
+// POST /api/reactivos - CON AUTENTICACIÓN
+router.post('/', verifyToken, reactivosController.createReactivo);
 
-// PUT /api/reactivos/:lote
-router.put('/:lote', reactivosController.updateReactivo);
+// PUT /api/reactivos/:lote - CON AUTENTICACIÓN
+router.put('/:lote', verifyToken, reactivosController.updateReactivo);
 
-// DELETE /api/reactivos/:lote - CON VERIFYTOKEN
+// DELETE /api/reactivos/:lote - CON AUTENTICACIÓN
 router.delete('/:lote', verifyToken, reactivosController.deleteReactivo);
 
 module.exports = router;

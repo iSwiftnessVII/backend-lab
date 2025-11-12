@@ -35,10 +35,9 @@ const reactivosController = {
       res.status(500).json({ message: 'Error obteniendo datos auxiliares' });
     }
   },
-
   // --- Catálogo de reactivos ---
   
-  // GET /api/reactivos/catalogo?q=
+   // GET /api/reactivos/catalogo?q=
   getCatalogo: async (req, res) => {
     const q = (req.query.q || '').trim();
     let limit = parseInt(req.query.limit, 10);
@@ -107,6 +106,15 @@ const reactivosController = {
         'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion) VALUES (?, ?, ?, ?, ?)',
         [codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion || null]
       );
+
+      // REGISTRO DE LOG - Solo si hay usuario autenticado
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS']
+        );
+      }
+
       res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion: descripcion || null });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
@@ -118,6 +126,7 @@ const reactivosController = {
   },
 
   // PUT /api/reactivos/catalogo/:codigo
+  // PUT /api/reactivos/catalogo/:codigo
   updateCatalogo: async (req, res) => {
     const { codigo } = req.params;
     const { nombre, tipo_reactivo, clasificacion_sga, descripcion } = req.body || {};
@@ -127,6 +136,15 @@ const reactivosController = {
         [nombre || null, tipo_reactivo || null, clasificacion_sga || null, descripcion || null, codigo]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // REGISTRO DE LOG - Solo si hay usuario autenticado
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS']
+        );
+      }
+
       res.json({ codigo, nombre: nombre || null, tipo_reactivo: tipo_reactivo || null, clasificacion_sga: clasificacion_sga || null, descripcion: descripcion || null });
     } catch (err) {
       console.error('Error PUT /catalogo/:codigo:', err);
@@ -134,9 +152,9 @@ const reactivosController = {
     }
   },
 
-  deleteCatalogo: async (req, res) => {
+deleteCatalogo: async (req, res) => {
     // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
       return res.status(403).json({ 
         message: 'No tienes permisos para eliminar del catálogo. Solo administradores pueden realizar esta acción.' 
       });
@@ -144,12 +162,12 @@ const reactivosController = {
 
     const { codigo } = req.params;
     try {
-      // Pre-chequeo: evitar violar FK si existen reactivos con ese código
+      // Pre-chequeo: evitar violar FK si existen reactivos con ese código (TU LÓGICA)
       const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM reactivos WHERE codigo = ?', [codigo]);
       const cnt = rows?.[0]?.cnt || 0;
       if (cnt > 0) {
         return res.status(409).json({
-          message: `No se puede eliminar del catálogo: existen ${cnt} reactivo(s) que referencian este código` ,
+          message: `No se puede eliminar del catálogo: existen ${cnt} reactivo(s) que referencian este código`,
           codigo,
           dependientes: cnt
         });
@@ -157,6 +175,15 @@ const reactivosController = {
 
       const [result] = await pool.query('DELETE FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // REGISTRO DE LOG - Solo si hay usuario autenticado
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CATALOGO_REACTIVOS']
+        );
+      }
+
       res.json({ message: 'Eliminado del catálogo' });
     } catch (err) {
       if (err && err.code === 'ER_ROW_IS_REFERENCED_2') {
@@ -256,38 +283,58 @@ const reactivosController = {
     const name = file.originalname || '';
     const mimetype = file.mimetype || '';
     if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
-      return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+        return res.status(400).json({ message: 'Archivo no es un PDF válido' });
     }
     if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
-      return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+        return res.status(400).json({ message: 'Archivo no es un PDF válido' });
     }
     try {
-      await pool.query(
-        `INSERT INTO hoja_seguridad (lote, hoja_seguridad, contenido_pdf)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE hoja_seguridad = VALUES(hoja_seguridad), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-        [lote, file.originalname || 'hoja_seguridad.pdf', file.buffer]
-      );
-      res.status(201).json({ url: `${encodeURIComponent(lote)}/hoja-seguridad/view` });
+        await pool.query(
+            `INSERT INTO hoja_seguridad (lote, hoja_seguridad, contenido_pdf)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE hoja_seguridad = VALUES(hoja_seguridad), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
+            [lote, file.originalname || 'hoja_seguridad.pdf', file.buffer]
+        );
+
+        // REGISTRO DE LOG - MODIFICADO
+        if (req.user && req.user.id) {
+            await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                [req.user.id, 'SUBIR_PDF', 'REACTIVOS']
+            );
+        }
+
+        res.status(201).json({ url: `${encodeURIComponent(lote)}/hoja-seguridad/view` });
     } catch (err) {
-      console.error('Error POST /:lote/hoja-seguridad:', err);
-      res.status(500).json({ message: 'Error subiendo PDF' });
+        console.error('Error POST /:lote/hoja-seguridad:', err);
+        res.status(500).json({ message: 'Error subiendo PDF' });
     }
   },
+
   deleteHojaSeguridadByLote: async (req, res) => {
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ message: 'No tienes permisos para eliminar hojas de seguridad. Solo administradores.' });
+    // VERIFICACIÓN POR ROL - MODIFICADO
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ message: 'No tienes permisos para eliminar hojas de seguridad. Solo administradores.' });
     }
     const { lote } = req.params;
     try {
-      const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE lote = ?', [lote]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrada' });
-      res.json({ message: 'Eliminada' });
+        const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE lote = ?', [lote]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrada' });
+
+        // REGISTRO DE LOG - MODIFICADO
+        if (req.user && req.user.id) {
+            await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS']
+            );
+        }
+
+        res.json({ message: 'Eliminada' });
     } catch (err) {
-      console.error('Error DELETE /:lote/hoja-seguridad:', err);
-      res.status(500).json({ message: 'Error eliminando PDF' });
+        console.error('Error DELETE /:lote/hoja-seguridad:', err);
+        res.status(500).json({ message: 'Error eliminando PDF' });
     }
-  },
+},
 
   // --- PDFs: Certificado de análisis ---
 
@@ -366,44 +413,64 @@ const reactivosController = {
     }
   },
   uploadCertAnalisisByLote: async (req, res) => {
-    const { lote } = req.params;
-    const file = req.file;
-    if (!file) return res.status(400).json({ message: 'Archivo requerido' });
-    const name = file.originalname || '';
-    const mimetype = file.mimetype || '';
-    if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
-      return res.status(400).json({ message: 'Archivo no es un PDF válido' });
-    }
-    if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
-      return res.status(400).json({ message: 'Archivo no es un PDF válido' });
-    }
-    try {
+  const { lote } = req.params;
+  const file = req.file;
+  if (!file) return res.status(400).json({ message: 'Archivo requerido' });
+  const name = file.originalname || '';
+  const mimetype = file.mimetype || '';
+  if (!/pdf/i.test(mimetype) && !name.toLowerCase().endsWith('.pdf')) {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
+  if (!file.buffer || String(file.buffer.slice(0,4).toString('utf8')) !== '%PDF') {
+    return res.status(400).json({ message: 'Archivo no es un PDF válido' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO cert_analisis (lote, certificado_analisis, contenido_pdf)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE certificado_analisis = VALUES(certificado_analisis), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
+      [lote, file.originalname || 'cert_analisis.pdf', file.buffer]
+    );
+
+    // REGISTRO DE LOG - MODIFICAR
+    if (req.user && req.user.id) {
       await pool.query(
-        `INSERT INTO cert_analisis (lote, certificado_analisis, contenido_pdf)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE certificado_analisis = VALUES(certificado_analisis), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-        [lote, file.originalname || 'cert_analisis.pdf', file.buffer]
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'SUBIR_PDF', 'REACTIVOS']
       );
-      res.status(201).json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
-    } catch (err) {
-      console.error('Error POST /:lote/cert-analisis:', err);
-      res.status(500).json({ message: 'Error subiendo PDF' });
     }
-  },
+
+    res.status(201).json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
+  } catch (err) {
+    console.error('Error POST /:lote/cert-analisis:', err);
+    res.status(500).json({ message: 'Error subiendo PDF' });
+  }
+},
+
   deleteCertAnalisisByLote: async (req, res) => {
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ message: 'No tienes permisos para eliminar certificados. Solo administradores.' });
+  // VERIFICACIÓN POR ROL - MODIFICAR
+  if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+    return res.status(403).json({ message: 'No tienes permisos para eliminar certificados. Solo administradores.' });
+  }
+  const { lote } = req.params;
+  try {
+    const [result] = await pool.query('DELETE FROM cert_analisis WHERE lote = ?', [lote]);
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+    // REGISTRO DE LOG - MODIFICAR
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS']
+      );
     }
-    const { lote } = req.params;
-    try {
-      const [result] = await pool.query('DELETE FROM cert_analisis WHERE lote = ?', [lote]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      res.json({ message: 'Eliminado' });
-    } catch (err) {
-      console.error('Error DELETE /:lote/cert-analisis:', err);
-      res.status(500).json({ message: 'Error eliminando PDF' });
-    }
-  },
+
+    res.json({ message: 'Eliminado' });
+  } catch (err) {
+    console.error('Error DELETE /:lote/cert-analisis:', err);
+    res.status(500).json({ message: 'Error eliminando PDF' });
+  }
+},
 
   // --- Reactivos (CRUD) ---
 
@@ -505,6 +572,21 @@ const reactivosController = {
           tipo_id, clasificacion_id, unidad_id, estado_id, almacenamiento_id, tipo_recipiente_id
         ]
       );
+
+      // REGISTRO DE LOG - MODIFICADO
+        if (req.user && req.user.id) {
+            await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                [req.user.id, 'CREAR', 'REACTIVOS']
+            );
+
+            // REGISTRO DE MOVIMIENTO
+            await pool.query(
+                'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+                ['REACTIVO', lote, req.user.id, 'ENTRADA']
+            );
+        }
+    
       res.status(201).json({ message: 'Creado' });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
@@ -555,6 +637,15 @@ const reactivosController = {
         ]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // REGISTRO DE LOG - MODIFICADO
+        if (req.user && req.user.id) {
+            await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'REACTIVOS']
+            );
+        }
+
       res.json({ message: 'Actualizado' });
     } catch (err) {
       console.error('Error PUT /:lote (reactivos):', err);
@@ -563,25 +654,33 @@ const reactivosController = {
   },
 
   // DELETE /api/reactivos/:lote
-    deleteReactivo: async (req, res) => {
-    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ 
-        message: 'No tienes permisos para eliminar reactivos. Solo administradores pueden realizar esta acción.' 
-      });
+  deleteReactivo: async (req, res) => {
+    // VERIFICACIÓN POR ROL - MODIFICADO
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ 
+            message: 'No tienes permisos para eliminar reactivos. Solo administradores pueden realizar esta acción.' 
+        });
     }
 
     const { lote } = req.params;
     try {
-      const [result] = await pool.query('DELETE FROM reactivos WHERE lote = ?', [lote]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      res.json({ message: 'Eliminado' });
-    } catch (err) {
-      console.error('Error DELETE /:lote (reactivos):', err);
-      res.status(500).json({ message: 'Error eliminando reactivo' });
-    }
-  }
-};
+        const [result] = await pool.query('DELETE FROM reactivos WHERE lote = ?', [lote]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
 
+        // REGISTRO DE LOG - MODIFICADO
+        if (req.user && req.user.id) {
+            await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                [req.user.id, 'ELIMINAR', 'REACTIVOS']
+            );
+        }
+
+        res.json({ message: 'Eliminado' });
+    } catch (err) {
+        console.error('Error DELETE /:lote (reactivos):', err);
+        res.status(500).json({ message: 'Error eliminando reactivo' });
+    }
+}
+};
 
 module.exports = reactivosController;

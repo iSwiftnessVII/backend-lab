@@ -9,13 +9,13 @@ const insumosController = {
   // GET /api/insumos/aux
   getAux: async (req, res) => {
     try {
-      res.json({ 
-        tipos: [], 
-        clasif: [], 
-        unidades: [], 
-        estado: [], 
-        recipiente: [], 
-        almacen: [] 
+      res.json({
+        tipos: [],
+        clasif: [],
+        unidades: [],
+        estado: [],
+        recipiente: [],
+        almacen: []
       });
     } catch (err) {
       console.error('Error /aux:', err);
@@ -30,29 +30,29 @@ const insumosController = {
     const q = (req.query.q || '').trim();
     let limit = parseInt(req.query.limit, 10);
     let offset = parseInt(req.query.offset, 10);
-    
+
     if (isNaN(limit) || limit <= 0) limit = 0;
     if (isNaN(offset) || offset < 0) offset = 0;
     if (limit > 500) limit = 500;
 
     try {
-  const baseSelect = 'SELECT item, nombre, descripcion FROM catalogo_insumos';
-  const where = q ? ' WHERE CAST(item AS CHAR) LIKE ? OR LOWER(nombre) LIKE ?' : '';
-  const order = ' ORDER BY item DESC';
+      const baseSelect = 'SELECT item, nombre, descripcion FROM catalogo_insumos';
+      const where = q ? ' WHERE CAST(item AS CHAR) LIKE ? OR LOWER(nombre) LIKE ?' : '';
+      const order = ' ORDER BY item DESC';
 
       if (limit > 0) {
         const countQuery = `SELECT COUNT(*) as total FROM catalogo_insumos${where}`;
         let totalRows;
-        
+
         if (q) {
           [totalRows] = await pool.query(countQuery, [likeParam(q), likeParam(q)]);
         } else {
           [totalRows] = await pool.query(countQuery);
         }
-        
+
         const total = totalRows[0]?.total || 0;
         let rows;
-        
+
         if (q) {
           [rows] = await pool.query(
             `${baseSelect}${where}${order} LIMIT ? OFFSET ?`,
@@ -64,11 +64,11 @@ const insumosController = {
             [limit, offset]
           );
         }
-        
+
         return res.json({ rows, total });
       } else {
         let rows;
-        
+
         if (q) {
           [rows] = await pool.query(
             `${baseSelect}${where}${order}`,
@@ -77,7 +77,7 @@ const insumosController = {
         } else {
           [rows] = await pool.query(`${baseSelect}${order}`);
         }
-        
+
         return res.json(rows);
       }
     } catch (err) {
@@ -110,7 +110,7 @@ const insumosController = {
       if (!rows.length) return res.status(404).send('No encontrado');
       const img = rows[0]?.imagen;
       if (!img) return res.status(204).end(); // sin contenido
-      res.setHeader('Content-Type', 'image/jpeg'); // suposición: puede venir cualquier mimetype; ajustar si se guarda tipo
+      res.setHeader('Content-Type', 'image/jpeg');
       res.send(img);
     } catch (err) {
       console.error('Error GET /catalogo/:item/imagen:', err);
@@ -122,7 +122,7 @@ const insumosController = {
   createCatalogo: async (req, res) => {
     const { item, nombre, descripcion } = req.body || {};
     const imagenBuffer = req.file?.buffer || null;
-    
+
     if (!item || !nombre) {
       return res.status(400).json({ message: 'Item y nombre son requeridos' });
     }
@@ -130,12 +130,21 @@ const insumosController = {
     if (Number.isNaN(itemNum)) {
       return res.status(400).json({ message: 'El item debe ser numérico' });
     }
-    
+
     try {
       await pool.query(
         'INSERT INTO catalogo_insumos (item, nombre, descripcion, imagen) VALUES (?, ?, ?, ?)',
         [itemNum, nombre, descripcion || null, imagenBuffer]
       );
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'CATALOGO_INSUMOS']
+        );
+      }
+
       return res.status(201).json({ item: itemNum, nombre, descripcion: descripcion || null });
     } catch (err) {
       if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
@@ -154,7 +163,7 @@ const insumosController = {
     const { item } = req.params;
     const { nombre, descripcion } = req.body || {};
     const imagenBuffer = req.file?.buffer;
-    
+
     try {
       let query = 'UPDATE catalogo_insumos SET nombre = ?, descripcion = ?';
       const params = [nombre || null, descripcion || null];
@@ -169,6 +178,15 @@ const insumosController = {
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'CATALOGO_INSUMOS']
+        );
+      }
+
       res.json({ item, nombre: nombre || null, descripcion: descripcion || null });
     } catch (err) {
       if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
@@ -220,7 +238,7 @@ const insumosController = {
   getInsumos: async (req, res) => {
     const q = (req.query.q || '').trim().toLowerCase();
     let limit = parseInt(req.query.limit, 10);
-    
+
     if (isNaN(limit) || limit <= 0) limit = 0;
     if (limit > 500) limit = 500;
 
@@ -295,13 +313,13 @@ const insumosController = {
     } = req.body || {};
 
     if (!item_catalogo || !nombre || cantidad_adquirida == null || cantidad_existente == null) {
-      return res.status(400).json({ 
-        message: 'Faltan campos requeridos: item_catalogo, nombre, cantidad_adquirida, cantidad_existente' 
+      return res.status(400).json({
+        message: 'Faltan campos requeridos: item_catalogo, nombre, cantidad_adquirida, cantidad_existente'
       });
     }
 
     try {
-      await pool.query(
+      const [result] = await pool.query(
         `INSERT INTO insumos (
           item_catalogo, nombre, cantidad_adquirida, cantidad_existente, 
           presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones
@@ -320,6 +338,23 @@ const insumosController = {
           observaciones || null
         ]
       );
+
+      const id = result.insertId;
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'INSUMOS']
+        );
+
+        // REGISTRO DE MOVIMIENTO
+        await pool.query(
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+          ['INSUMO', id.toString(), req.user.id, 'ENTRADA']
+        );
+      }
+
       res.status(201).json({ message: 'Insumo creado correctamente' });
     } catch (err) {
       console.error('Error POST / (insumos):', err);
@@ -366,10 +401,19 @@ const insumosController = {
           id
         ]
       );
-      
+
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'INSUMOS']
+        );
+      }
+
       res.json({ message: 'Insumo actualizado correctamente' });
     } catch (err) {
       console.error('Error PUT /:id (insumos):', err);
@@ -380,12 +424,12 @@ const insumosController = {
   // DELETE /api/insumos/:id
   deleteInsumo: async (req, res) => {
     const { id } = req.params;
-    
+
     try {
-      // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
-      if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-        return res.status(403).json({ 
-          message: 'No tienes permisos para eliminar insumos. Solo administradores pueden realizar esta acción.' 
+      // VERIFICACIÓN POR ROL - Con req.user.rol
+      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({
+          message: 'No tienes permisos para eliminar insumos. Solo administradores pueden realizar esta acción.'
         });
       }
 
@@ -393,48 +437,73 @@ const insumosController = {
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'INSUMOS']
+        );
+      }
+
       res.json({ message: 'Insumo eliminado correctamente' });
     } catch (err) {
       console.error('Error DELETE /:id (insumos):', err);
       res.status(500).json({ message: 'Error eliminando insumo' });
     }
+  },
+
+  // PATCH /api/insumos/:id/existencias
+  ajustarExistencias: async (req, res) => {
+    const { id } = req.params;
+    const { delta, cantidad } = req.body || {};
+
+    try {
+      if (typeof cantidad !== 'undefined') {
+        const c = Number(cantidad);
+        if (!Number.isFinite(c) || c < 0) {
+          return res.status(400).json({ message: 'Cantidad inválida. Debe ser >= 0' });
+        }
+        const [result] = await pool.query(
+          'UPDATE insumos SET cantidad_existente = ? WHERE id = ?', [c, id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      } else if (typeof delta !== 'undefined') {
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) {
+          return res.status(400).json({ message: 'Delta inválido. Debe ser distinto de 0' });
+        }
+        const [result] = await pool.query(
+          'UPDATE insumos SET cantidad_existente = GREATEST(0, cantidad_existente + ?) WHERE id = ?', [d, id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      } else {
+        return res.status(400).json({ message: 'Provee cantidad (>=0) o delta (!=0)' });
+      }
+
+      const [rows] = await pool.query('SELECT cantidad_existente FROM insumos WHERE id = ?', [id]);
+      const nuevo = rows[0]?.cantidad_existente;
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'AJUSTAR_EXISTENCIAS', 'INSUMOS']
+        );
+
+        // REGISTRO DE MOVIMIENTO
+        await pool.query(
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+          ['INSUMO', id.toString(), req.user.id, 'AJUSTE']
+        );
+      }
+
+      return res.json({ id, cantidad_existente: nuevo });
+    } catch (err) {
+      console.error('Error PATCH /:id/existencias (insumos):', err);
+      res.status(500).json({ message: 'Error ajustando existencias' });
+    }
   }
 };
 
 module.exports = insumosController;
-// PATCH /api/insumos/:id/existencias
-insumosController.ajustarExistencias = async (req, res) => {
-  const { id } = req.params;
-  const { delta, cantidad } = req.body || {};
-
-  try {
-    if (typeof cantidad !== 'undefined') {
-      const c = Number(cantidad);
-      if (!Number.isFinite(c) || c < 0) {
-        return res.status(400).json({ message: 'Cantidad inválida. Debe ser >= 0' });
-      }
-      const [result] = await pool.query(
-        'UPDATE insumos SET cantidad_existente = ? WHERE id = ?',[c, id]
-      );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-    } else if (typeof delta !== 'undefined') {
-      const d = Number(delta);
-      if (!Number.isFinite(d) || d === 0) {
-        return res.status(400).json({ message: 'Delta inválido. Debe ser distinto de 0' });
-      }
-      const [result] = await pool.query(
-        'UPDATE insumos SET cantidad_existente = GREATEST(0, cantidad_existente + ?) WHERE id = ?', [d, id]
-      );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-    } else {
-      return res.status(400).json({ message: 'Provee cantidad (>=0) o delta (!=0)' });
-    }
-
-    const [rows] = await pool.query('SELECT cantidad_existente FROM insumos WHERE id = ?', [id]);
-    const nuevo = rows[0]?.cantidad_existente;
-    return res.json({ id, cantidad_existente: nuevo });
-  } catch (err) {
-    console.error('Error PATCH /:id/existencias (insumos):', err);
-    res.status(500).json({ message: 'Error ajustando existencias' });
-  }
-};

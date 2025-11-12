@@ -8,16 +8,16 @@ const { verifyToken } = require('../middleware/jwt');
 // List clientes
 router.get('/clientes', solicitudesController.getClientes);
 
-// Create cliente
-router.post('/clientes', solicitudesController.createCliente);
+// Create cliente - CON AUTENTICACIÓN
+router.post('/clientes', verifyToken, solicitudesController.createCliente);
 
 // Get single cliente
 router.get('/clientes/:id', solicitudesController.getClienteById);
 
-// Update cliente
-router.put('/clientes/:id', solicitudesController.updateCliente);
+// Update cliente - CON AUTENTICACIÓN
+router.put('/clientes/:id', verifyToken, solicitudesController.updateCliente);
 
-// Delete cliente
+// Delete cliente - CON AUTENTICACIÓN
 router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente);
 
 // ---------- SOLICITUDES CRUD ----------
@@ -25,19 +25,19 @@ router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente)
 // List solicitudes
 router.get('/', solicitudesController.getSolicitudes);
 
-// Create solicitud
-router.post('/', solicitudesController.createSolicitud);
+// Create solicitud - CON AUTENTICACIÓN
+router.post('/', verifyToken, solicitudesController.createSolicitud);
 
 // Get single solicitud
 router.get('/:id', solicitudesController.getSolicitudById);
 
-// Update solicitud
-router.put('/:id', solicitudesController.updateSolicitud);
+// Update solicitud - CON AUTENTICACIÓN
+router.put('/:id', verifyToken, solicitudesController.updateSolicitud);
 
-// Delete solicitud
+// Delete solicitud - CON AUTENTICACIÓN
 router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
 
-// Create encuesta
-router.post('/encuestas', solicitudesController.createEncuesta);
+// Create encuesta - CON AUTENTICACIÓN
+router.post('/encuestas', verifyToken, solicitudesController.createEncuesta);
 
 module.exports = router;

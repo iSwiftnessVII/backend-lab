@@ -2,7 +2,7 @@ const pool = require('../config/db');
 
 const solicitudesController = {
   // ---------- CLIENTES CRUD ----------
-  
+
   // List clientes
   getClientes: async (req, res) => {
     const q = req.query.q || '';
@@ -27,7 +27,7 @@ const solicitudesController = {
     const body = req.body || {};
     const required = ['nombre_solicitante', 'tipo_identificacion', 'numero_identificacion'];
     for (const f of required) if (!body[f]) return res.status(400).json({ message: `Missing ${f}` });
-    
+
     try {
       let numeroVal = body.numero || null;
       if (!numeroVal) {
@@ -40,7 +40,7 @@ const solicitudesController = {
         }
       }
 
-      const fechaVinc = body.fecha_vinculacion || new Date().toISOString().slice(0,10);
+      const fechaVinc = body.fecha_vinculacion || new Date().toISOString().slice(0, 10);
       const tipoUsuarioVal = body.tipo_usuario || 'Persona Natural';
       const sexoVal = body.sexo || 'Otro';
 
@@ -69,6 +69,15 @@ const solicitudesController = {
           body.observaciones || null
         ]
       );
+
+      // REGISTRO DE LOG - MODIFICAR
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'CLIENTES']
+        );
+      }
+
       res.status(201).json({ id_cliente: result.insertId });
     } catch (err) {
       console.error('POST /clientes error', err);
@@ -103,6 +112,15 @@ const solicitudesController = {
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
       await pool.query(`UPDATE clientes SET ${fields.join(', ')} WHERE id_cliente = ?`, values);
+
+      // REGISTRO DE LOG - MODIFICAR
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'CLIENTES']
+        );
+      }
+
       res.json({ updated: true });
     } catch (err) {
       console.error('PUT /clientes/:id error', err);
@@ -110,24 +128,37 @@ const solicitudesController = {
     }
   },
 
-  // Delete cliente
-  deleteCliente: async (req, res) => {
-    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+  // DELETE /api/solicitudes/clientes/:id
+deleteCliente: async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
       return res.status(403).json({ 
         message: 'No tienes permisos para eliminar clientes. Solo administradores pueden realizar esta acción.' 
       });
     }
 
-    const id = req.params.id;
-    try {
-      await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
-      res.json({ deleted: true });
-    } catch (err) {
-      console.error('DELETE /clientes/:id error', err);
-      res.status(500).json({ message: 'Internal server error' });
+    const [result] = await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Cliente no encontrado' });
     }
-  },
+
+    // 4. REGISTRAR EL LOG de auditoría (solo si hay usuario)
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'ELIMINAR', 'CLIENTES']
+      );
+    }
+
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error('DELETE /clientes/:id error', err);
+    res.status(500).json({ message: 'Error eliminando cliente' });
+  }
+},
 
   // ---------- SOLICITUDES CRUD ----------
 
@@ -154,7 +185,7 @@ const solicitudesController = {
   createSolicitud: async (req, res) => {
     const b = req.body || {};
     if (!b.id_cliente) return res.status(400).json({ message: 'Missing id_cliente' });
-    
+
     try {
       let numeroSol = b.numero_solicitud || null;
       if (!numeroSol) {
@@ -198,6 +229,15 @@ const solicitudesController = {
           b.mes_solicitud || null
         ]
       );
+
+      // REGISTRO DE LOG - MODIFICAR
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'SOLICITUDES']
+        );
+      }
+
       res.status(201).json({ id_solicitud: result.insertId });
     } catch (err) {
       console.error('POST /solicitudes error', err);
@@ -235,6 +275,15 @@ const solicitudesController = {
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
       await pool.query(`UPDATE Solicitudes SET ${fields.join(', ')} WHERE id_solicitud = ?`, values);
+
+      // REGISTRO DE LOG - MODIFICAR
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'SOLICITUDES']
+        );
+      }
+
       res.json({ updated: true });
     } catch (err) {
       console.error('PUT /solicitudes/:id error', err);
@@ -242,37 +291,49 @@ const solicitudesController = {
     }
   },
 
-  // Delete solicitud
-   deleteSolicitud: async (req, res) => {
-    // VERIFICACIÓN POR ROL - Solo Administrador y Superadmin pueden eliminar
-    if (req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+  // DELETE /api/solicitudes/:id  
+deleteSolicitud: async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
       return res.status(403).json({ 
         message: 'No tienes permisos para eliminar solicitudes. Solo administradores pueden realizar esta acción.' 
       });
     }
 
-    const id = req.params.id;
-    try {
-      await pool.query('DELETE FROM Solicitudes WHERE id_solicitud = ?', [id]);
-      res.json({ deleted: true });
-    } catch (err) {
-      console.error('DELETE /solicitudes/:id error', err);
-      res.status(500).json({ message: 'Internal server error' });
+    const [result] = await pool.query('DELETE FROM Solicitudes WHERE id_solicitud = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Solicitud no encontrada' });
     }
-  },
+
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'ELIMINAR', 'SOLICITUDES']
+      );
+    }
+
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error('DELETE /solicitudes/:id error', err);
+    res.status(500).json({ message: 'Error eliminando solicitud' });
+  }
+},
 
   // Create encuesta
   createEncuesta: async (req, res) => {
     const body = req.body || {};
-    
+
     if (!body.id_solicitud) {
       return res.status(400).json({ message: 'Missing id_solicitud' });
     }
-    
+
     try {
       const connection = await pool.getConnection();
       await connection.beginTransaction();
-      
+
       try {
         if (body.fecha_encuesta || body.puntuacion_satisfaccion || body.comentarios || body.recomendaria_servicio !== undefined) {
           await connection.query(
@@ -287,20 +348,20 @@ const solicitudesController = {
             ]
           );
         }
-        
+
         const updateFields = [];
         const updateValues = [];
-        
+
         if (body.cliente_respondio_encuesta !== undefined) {
           updateFields.push('cliente_respondio_encuesta = ?');
           updateValues.push(body.cliente_respondio_encuesta ? 1 : 0);
         }
-        
+
         if (body.solicito_nueva_encuesta !== undefined) {
           updateFields.push('solicito_nueva_encuesta = ?');
           updateValues.push(body.solicito_nueva_encuesta ? 1 : 0);
         }
-        
+
         if (updateFields.length > 0) {
           updateValues.push(body.id_solicitud);
           await connection.query(
@@ -308,10 +369,18 @@ const solicitudesController = {
             updateValues
           );
         }
-        
+
+        // REGISTRO DE LOG - MODIFICAR
+        if (req.user && req.user.id) {
+          await connection.query(
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+            [req.user.id, 'CREAR_ENCUESTA', 'SOLICITUDES']
+          );
+        }
+
         await connection.commit();
         connection.release();
-        
+
         res.json({ message: 'Encuesta creada exitosamente' });
       } catch (err) {
         await connection.rollback();

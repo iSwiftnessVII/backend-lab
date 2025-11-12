@@ -63,3 +63,10 @@ ALTER TABLE catalogo_insumos MODIFY imagen MEDIUMBLOB NULL;
 ```
 
 - Ensure the backend is using the intended database (`DB_NAME`) in your environment. The scripts default to `lab`.
+
+
+Cuentas
+
+auxiliar@gmail.com  123456
+admin@gmail.com 123456
+superadmin@gmail.com 123456

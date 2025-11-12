@@ -16,11 +16,11 @@ router.get('/catalogo', insumosController.getCatalogo);
 // GET /api/insumos/catalogo/:item
 router.get('/catalogo/:item', insumosController.getCatalogoItem);
 
-// POST /api/insumos/catalogo (multipart con 'imagen')
-router.post('/catalogo', uploadImage.single('imagen'), insumosController.createCatalogo);
+// POST /api/insumos/catalogo (multipart con 'imagen') - CON AUTENTICACIÓN
+router.post('/catalogo', verifyToken, uploadImage.single('imagen'), insumosController.createCatalogo);
 
-// PUT /api/insumos/catalogo/:item (multipart opcional 'imagen')
-router.put('/catalogo/:item', uploadImage.single('imagen'), insumosController.updateCatalogo);
+// PUT /api/insumos/catalogo/:item (multipart opcional 'imagen') - CON AUTENTICACIÓN
+router.put('/catalogo/:item', verifyToken, uploadImage.single('imagen'), insumosController.updateCatalogo);
 
 // DELETE /api/insumos/catalogo/:item
 router.delete('/catalogo/:item', verifyToken, insumosController.deleteCatalogo);
@@ -36,16 +36,16 @@ router.get('/', insumosController.getInsumos);
 // GET /api/insumos/:id
 router.get('/:id', insumosController.getInsumoById);
 
-// POST /api/insumos
-router.post('/', insumosController.createInsumo);
+// POST /api/insumos - CON AUTENTICACIÓN
+router.post('/', verifyToken, insumosController.createInsumo);
 
-// PUT /api/insumos/:id
-router.put('/:id', insumosController.updateInsumo);
+// PUT /api/insumos/:id - CON AUTENTICACIÓN
+router.put('/:id', verifyToken, insumosController.updateInsumo);
 
-// PATCH existencias: ajustar cantidad existente absoluta o por delta
-router.patch('/:id/existencias', insumosController.ajustarExistencias);
+// PATCH existencias: ajustar cantidad existente absoluta o por delta - CON AUTENTICACIÓN
+router.patch('/:id/existencias', verifyToken, insumosController.ajustarExistencias);
 
-// DELETE /api/insumos/:id
+// DELETE /api/insumos/:id - CON AUTENTICACIÓN
 router.delete('/:id', verifyToken, insumosController.deleteInsumo);
 
 module.exports = router;

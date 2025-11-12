@@ -13,9 +13,10 @@ const usuariosRoutes = require('./src/routes/usuarios');
 const equiposRoutes = require('./src/routes/equipos');
 const dashboardRoutes = require('./src/routes/dashboard');
 const materialesVolRoutes = require('./src/routes/materialesVolumetricos');
+const logsRoutes = require('./src/routes/logs');
 
 const app = express();
-const port = process.env.PORT || 4000; 
+const port = process.env.PORT || 4000;
 
 // CORS más permisivo para desarrollo
 app.use(cors({
@@ -40,6 +41,7 @@ app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/equipos', equiposRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/materiales-volumetricos', materialesVolRoutes);
+app.use('/api/logs', logsRoutes);
 
 app.get('/', (req, res) => {
   res.type('text/plain').send('Hello from app-lab-back (express)!');
