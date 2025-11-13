@@ -183,6 +183,155 @@ const equiposController = {
       res.status(500).json({ message: 'Error eliminando equipo' });
     }
   },
+
+  // POST /api/equipos/:id/mantenimientos
+  createMantenimientoEquipo: async (req, res) => {
+    const { id } = req.params; // equipo_id
+    const {
+      requerimientos_equipo,
+      elementos_v,
+      voltaje,
+      elementos_f,
+      frecuencia,
+    } = req.body || {};
+
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+
+    function normEnum(v) {
+      if (v === undefined || v === null) return null;
+      const s = String(v).trim().toLowerCase();
+      if (s === 'si') return 'Si';
+      if (s === 'no') return 'No';
+      return null;
+    }
+
+    const hasValue = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+    const ev = normEnum(elementos_v);
+    const ef = normEnum(elementos_f);
+    // Permitir null/'' como valor vacío; solo validar cuando hay valor real
+    if (hasValue(elementos_v) && ev === null) {
+      return res.status(400).json({ message: "elementos_v debe ser 'Si' o 'No'" });
+    }
+    if (hasValue(elementos_f) && ef === null) {
+      return res.status(400).json({ message: "elementos_f debe ser 'Si' o 'No'" });
+    }
+
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO mantenimiento_equipo (equipo_id, requerimientos_equipo, elementos_v, voltaje, elementos_f, frecuencia)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          equipoIdNum,
+          toNull(requerimientos_equipo),
+          ev,
+          toNull(voltaje && String(voltaje).slice(0,50)),
+          ef,
+          toNull(frecuencia && String(frecuencia).slice(0,50)),
+        ]
+      );
+      res.status(201).json({ id: result.insertId, equipo_id: equipoIdNum });
+    } catch (err) {
+      console.error('Error POST /api/equipos/:id/mantenimientos', err);
+      res.status(500).json({ message: 'Error creando mantenimiento de equipo' });
+    }
+  },
+  // GET /api/equipos/:id/mantenimientos
+  getMantenimientosEquipo: async (req, res) => {
+    const { id } = req.params;
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, equipo_id, requerimientos_equipo, elementos_v, voltaje, elementos_f, frecuencia
+         FROM mantenimiento_equipo WHERE equipo_id = ? ORDER BY id DESC`,
+        [equipoIdNum]
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error('Error GET /api/equipos/:id/mantenimientos', err);
+      res.status(500).json({ message: 'Error listando mantenimientos de equipo' });
+    }
+  },
+  // POST /api/equipos/:id/verificaciones
+  createVcc: async (req, res) => {
+    const { id } = req.params; // equipo_id
+    const {
+      campo_medicion,
+      exactitud,
+      sujeto_verificar,
+      sujeto_calibracion,
+      resolucion_division,
+      sujeto_calificacion,
+      accesorios,
+    } = req.body || {};
+
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+
+    function normEnum(v) {
+      if (v === undefined || v === null) return null;
+      const s = String(v).trim().toLowerCase();
+      if (s === 'si') return 'Si';
+      if (s === 'no') return 'No';
+      return null;
+    }
+    const hasVal = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+    const sv = normEnum(sujeto_verificar);
+    const scb = normEnum(sujeto_calibracion);
+    const scf = normEnum(sujeto_calificacion);
+    if (hasVal(sujeto_verificar) && sv === null) return res.status(400).json({ message: "sujeto_verificar debe ser 'Si' o 'No'" });
+    if (hasVal(sujeto_calibracion) && scb === null) return res.status(400).json({ message: "sujeto_calibracion debe ser 'Si' o 'No'" });
+    if (hasVal(sujeto_calificacion) && scf === null) return res.status(400).json({ message: "sujeto_calificacion debe ser 'Si' o 'No'" });
+
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO verificacion_calibracion_calificacion
+          (equipo_id, campo_medicion, exactitud, sujeto_verificar, sujeto_calibracion, resolucion_division, sujeto_calificacion, accesorios)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          equipoIdNum,
+          toNull(campo_medicion && String(campo_medicion).slice(0, 100)),
+          toNull(exactitud && String(exactitud).slice(0, 100)),
+          sv,
+          scb,
+          toNull(resolucion_division && String(resolucion_division).slice(0, 100)),
+          scf,
+          toNull(accesorios),
+        ]
+      );
+      res.status(201).json({ id: result.insertId, equipo_id: equipoIdNum });
+    } catch (err) {
+      console.error('Error POST /api/equipos/:id/verificaciones', err);
+      res.status(500).json({ message: 'Error creando verificación/calibración/calificación' });
+    }
+  },
+
+  // GET /api/equipos/:id/verificaciones
+  getVcc: async (req, res) => {
+    const { id } = req.params;
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, equipo_id, campo_medicion, exactitud, sujeto_verificar, sujeto_calibracion, resolucion_division, sujeto_calificacion, accesorios
+         FROM verificacion_calibracion_calificacion WHERE equipo_id = ? ORDER BY id DESC`,
+        [equipoIdNum]
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error('Error GET /api/equipos/:id/verificaciones', err);
+      res.status(500).json({ message: 'Error listando verificaciones/calibraciones/calificaciones' });
+    }
+  },
 };
 
 module.exports = equiposController;

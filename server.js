@@ -43,8 +43,19 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/materiales-volumetricos', materialesVolRoutes);
 app.use('/api/logs', logsRoutes);
 
-app.get('/', (req, res) => {
-  res.type('text/plain').send('Hello from app-lab-back (express)!');
-});
+function logEquiposRoutes() {
+  try {
+    const stack = equiposRoutes.stack || [];
+    console.log('🔎 Rutas /api/equipos registradas:');
+    stack.forEach(l => {
+      if (l.route) {
+        const methods = Object.keys(l.route.methods).map(m => m.toUpperCase()).join(',');
+        console.log(`  ${methods} ${'/api/equipos' + l.route.path}`);
+      }
+    });
+  } catch (e) {
+    console.log('No se pudieron listar rutas de equipos', e);
+  }
+}
 
 app.listen(port, () => console.log(`✅ Server listening on port ${port}`));
