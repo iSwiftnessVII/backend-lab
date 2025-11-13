@@ -16,7 +16,7 @@ const materialesVolRoutes = require('./src/routes/materialesVolumetricos');
 const logsRoutes = require('./src/routes/logs');
 
 const app = express();
-const port = process.env.PORT || 4000;
+let desiredPort = parseInt(process.env.PORT, 10) || 4000;
 
 // CORS más permisivo para desarrollo
 app.use(cors({
@@ -58,8 +58,25 @@ function logEquiposRoutes() {
   }
 }
 
-app.listen(port, () => console.log(`✅ Server listening on port ${port}`));
-app.listen(port, () => {
-  console.log(`✅ Server listening on port ${port}`);
-  logEquiposRoutes();
-});
+function start(port, attempt = 1) {
+  const server = app.listen(port, () => {
+    console.log(`✅ Server listening on port ${port}`);
+    logEquiposRoutes();
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`⚠️  Puerto ${port} en uso. Intento ${attempt}.`);
+      if (attempt < 3) {
+        const nextPort = port + 1;
+        console.log(`🔁 Reintentando en puerto ${nextPort}...`);
+        start(nextPort, attempt + 1);
+      } else {
+        console.error('❌ No se pudo iniciar el servidor tras varios intentos. Libera el puerto o configura PORT.');
+      }
+    } else {
+      console.error('❌ Error iniciando servidor:', err);
+    }
+  });
+}
+
+start(desiredPort);

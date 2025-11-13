@@ -7,6 +7,25 @@ function likeParam(q) {
 function trimStr(v) { return typeof v === 'string' ? v.trim() : v; }
 function toNull(v) { const t = trimStr(v); return t === '' || t === undefined ? null : t; }
 
+async function ensureVccTable() {
+  // Crea la tabla VCC si no existe para evitar errores 500 por tabla ausente
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS verificacion_calibracion_calificacion (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      equipo_id INT NOT NULL,
+      campo_medicion VARCHAR(100) NULL,
+      exactitud VARCHAR(100) NULL,
+      sujeto_verificar ENUM('Si','No') NULL,
+      sujeto_calibracion ENUM('Si','No') NULL,
+      resolucion_division VARCHAR(100) NULL,
+      sujeto_calificacion ENUM('Si','No') NULL,
+      accesorios TEXT NULL,
+      creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_vcc_equipo (equipo_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
 const equiposController = {
   // GET /api/equipos?q=&limit=&offset=
   getEquipos: async (req, res) => {
@@ -259,6 +278,7 @@ const equiposController = {
   },
   // POST /api/equipos/:id/verificaciones
   createVcc: async (req, res) => {
+    try { await ensureVccTable(); } catch (e) { /* ignore table create race */ }
     const { id } = req.params; // equipo_id
     const {
       campo_medicion,
@@ -309,12 +329,19 @@ const equiposController = {
       res.status(201).json({ id: result.insertId, equipo_id: equipoIdNum });
     } catch (err) {
       console.error('Error POST /api/equipos/:id/verificaciones', err);
-      res.status(500).json({ message: 'Error creando verificación/calibración/calificación' });
+      res.status(500).json({ 
+        message: 'Error creando verificación/calibración/calificación',
+        code: err && err.code,
+        errno: err && err.errno,
+        sqlMessage: err && err.sqlMessage,
+        sqlState: err && err.sqlState
+      });
     }
   },
 
   // GET /api/equipos/:id/verificaciones
   getVcc: async (req, res) => {
+    try { await ensureVccTable(); } catch (e) { /* ignore table create race */ }
     const { id } = req.params;
     const equipoIdNum = parseInt(id, 10);
     if (!equipoIdNum || isNaN(equipoIdNum)) {
@@ -329,7 +356,17 @@ const equiposController = {
       res.json(rows);
     } catch (err) {
       console.error('Error GET /api/equipos/:id/verificaciones', err);
-      res.status(500).json({ message: 'Error listando verificaciones/calibraciones/calificaciones' });
+      // Si la tabla no existe y no se pudo crear, devolvemos lista vacía para no romper el front
+      if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.errno === 1146)) {
+        return res.json([]);
+      }
+      res.status(500).json({ 
+        message: 'Error listando verificaciones/calibraciones/calificaciones',
+        code: err && err.code,
+        errno: err && err.errno,
+        sqlMessage: err && err.sqlMessage,
+        sqlState: err && err.sqlState
+      });
     }
   },
 };
