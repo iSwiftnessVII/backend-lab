@@ -59,3 +59,7 @@ function logEquiposRoutes() {
 }
 
 app.listen(port, () => console.log(`✅ Server listening on port ${port}`));
+app.listen(port, () => {
+  console.log(`✅ Server listening on port ${port}`);
+  logEquiposRoutes();
+});
