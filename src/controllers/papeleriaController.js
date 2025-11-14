@@ -74,6 +74,15 @@ const papeleriaController = {
     if (Number.isNaN(itemNum)) return res.status(400).json({ message: 'El item debe ser numérico' });
     try {
       await pool.query('INSERT INTO catalogo_papeleria (item, nombre, descripcion, imagen) VALUES (?, ?, ?, ?)', [itemNum, nombre, descripcion || null, imagenBuffer]);
+      
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'CATALOGO_PAPELERIA']
+        );
+      }
+
       res.status(201).json({ item: itemNum, nombre, descripcion: descripcion || null });
     } catch (err) {
       if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
@@ -100,6 +109,15 @@ const papeleriaController = {
       const [result] = await pool.query('DELETE FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
       console.log('[DELETE catalogo_papeleria] item =', item, 'affectedRows =', result.affectedRows);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CATALOGO_PAPELERIA']
+        );
+      }
+
       res.json({ deleted: result.affectedRows, message: 'Item de catálogo eliminado correctamente' });
     } catch (err) {
       if (err && (err.code === 'ER_ROW_IS_REFERENCED_2' || err.code === 'ER_ROW_IS_REFERENCED' || err.errno === 1451)) {
@@ -185,7 +203,7 @@ const papeleriaController = {
     }
 
     try {
-      await pool.query(
+      const [result] = await pool.query(
         `INSERT INTO papeleria (
           item_catalogo, nombre, cantidad_adquirida, cantidad_existente,
           presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones
@@ -203,6 +221,21 @@ const papeleriaController = {
           observaciones || null
         ]
       );
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'PAPELERIA']
+        );
+
+        // REGISTRO DE MOVIMIENTO
+        await pool.query(
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+          ['PAPELERIA', result.insertId.toString(), req.user.id, 'ENTRADA']
+        );
+      }
+
       res.status(201).json({ message: 'Papelería creada correctamente' });
     } catch (err) {
       console.error('Error POST / (papeleria):', err);
@@ -247,6 +280,15 @@ const papeleriaController = {
         ]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'PAPELERIA']
+        );
+      }
+
       res.json({ message: 'Papelería actualizada correctamente' });
     } catch (err) {
       console.error('Error PUT /:id (papeleria):', err);
@@ -282,6 +324,21 @@ const papeleriaController = {
 
       const [rows] = await pool.query('SELECT cantidad_existente FROM papeleria WHERE id = ?', [id]);
       const nuevo = rows[0]?.cantidad_existente;
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'AJUSTAR_EXISTENCIAS', 'PAPELERIA']
+        );
+
+        // REGISTRO DE MOVIMIENTO
+        await pool.query(
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+          ['PAPELERIA', id.toString(), req.user.id, 'AJUSTE']
+        );
+      }
+
       return res.json({ id, cantidad_existente: nuevo });
     } catch (err) {
       console.error('Error PATCH /:id/existencias (papeleria):', err);
@@ -298,6 +355,15 @@ const papeleriaController = {
       }
       const [result] = await pool.query('DELETE FROM papeleria WHERE id = ?', [id]);
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'PAPELERIA']
+        );
+      }
+
       res.json({ message: 'Papelería eliminada correctamente' });
     } catch (err) {
       console.error('Error DELETE /:id (papeleria):', err);

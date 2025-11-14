@@ -42,6 +42,21 @@ module.exports = {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [item, nombre_material, clase || null, marca || null, referencia || null, normDate(fecha_adquisicion), cantidad || null, codigo_calibrado || null, normDate(fecha_calibracion), codigo_en_uso || null, codigo_fuera_de_uso || null, observaciones || null]
       );
+      
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await db.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'CREAR', 'MATERIALES_VOLUMETRICOS']
+        );
+
+        // REGISTRO DE MOVIMIENTO
+        await db.query(
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+          ['EQUIPO', result.insertId.toString(), req.user.id, 'ENTRADA']
+        );
+      }
+
       res.status(201).json({ id: result.insertId });
     } catch (e){ res.status(500).json({ message: e.message || 'Error creando material' }); }
   },
@@ -50,6 +65,15 @@ module.exports = {
       const id = parseInt(req.params.id, 10);
       const body = req.body || {};
       const [result] = await db.query('UPDATE materiales_volumetricos SET ? WHERE id = ?', [body, id]);
+      
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await db.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'MATERIALES_VOLUMETRICOS']
+        );
+      }
+
       res.json({ affectedRows: result.affectedRows });
     } catch (e){ res.status(500).json({ message: e.message || 'Error actualizando material' }); }
   },
@@ -57,6 +81,15 @@ module.exports = {
     try {
       const id = parseInt(req.params.id, 10);
       const [result] = await db.query('DELETE FROM materiales_volumetricos WHERE id = ?', [id]);
+      
+      // REGISTRO DE LOG - Con req.user.id
+      if (req.user && req.user.id) {
+        await db.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'MATERIALES_VOLUMETRICOS']
+        );
+      }
+
       res.json({ affectedRows: result.affectedRows });
     } catch (e){ res.status(500).json({ message: e.message || 'Error eliminando material' }); }
   }

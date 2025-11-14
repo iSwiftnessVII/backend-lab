@@ -8,15 +8,15 @@ const { verifyToken } = require('../middleware/jwt');
 router.get('/catalogo', papeleriaController.getCatalogo);
 router.get('/catalogo/:item', papeleriaController.getCatalogoItem);
 router.get('/catalogo/:item/imagen', papeleriaController.getCatalogoItemImagen);
-router.post('/catalogo', uploadImage.single('imagen'), papeleriaController.createCatalogo);
+router.post('/catalogo', verifyToken, uploadImage.single('imagen'), papeleriaController.createCatalogo);
 router.delete('/catalogo/:item', verifyToken, papeleriaController.deleteCatalogo);
 
 // Inventario de papelería
 router.get('/', papeleriaController.getPapeleria);
 router.get('/:id', papeleriaController.getPapeleriaById);
-router.post('/', papeleriaController.createPapeleria);
-router.put('/:id', papeleriaController.updatePapeleria);
-router.patch('/:id/existencias', papeleriaController.ajustarExistencias);
+router.post('/', verifyToken, papeleriaController.createPapeleria);
+router.put('/:id', verifyToken, papeleriaController.updatePapeleria);
+router.patch('/:id/existencias', verifyToken, papeleriaController.ajustarExistencias);
 router.delete('/:id', verifyToken, papeleriaController.deletePapeleria);
 
 module.exports = router;
