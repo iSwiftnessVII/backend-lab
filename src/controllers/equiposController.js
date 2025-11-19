@@ -110,119 +110,153 @@ const equiposController = {
   },
 
   // POST /api/equipos
-  createEquipo: async (req, res) => {
-    const {
-      nombre,
-      modelo,
-      marca,
-      inventario_sena,
-      acreditacion,
-      tipo_manual,
-      codigo_identificacion,
-      numero_serie,
-      tipo,
-      clasificacion,
-      manual_usuario,
-      puesta_en_servicio,
-      fecha_adquisicion,
-    } = req.body || {};
+createEquipo: async (req, res) => {
+  const {
+    nombre,
+    modelo,
+    marca,
+    inventario_sena,
+    acreditacion,
+    tipo_manual,
+    codigo_identificacion,
+    numero_serie,
+    tipo,
+    clasificacion,
+    manual_usuario,
+    puesta_en_servicio,
+    fecha_adquisicion,
+  } = req.body || {};
 
-    if (!nombre || !String(nombre).trim()) {
-      return res.status(400).json({ message: 'El nombre es requerido' });
-    }
+  if (!nombre || !String(nombre).trim()) {
+    return res.status(400).json({ message: 'El nombre es requerido' });
+  }
 
-    try {
-      const [result] = await pool.query(
-        `INSERT INTO equipos (nombre, modelo, marca, inventario_sena, acreditacion, tipo_manual, codigo_identificacion, numero_serie, tipo, clasificacion, manual_usuario, puesta_en_servicio, fecha_adquisicion)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          String(nombre).trim(),
-          toNull(modelo),
-          toNull(marca),
-          toNull(inventario_sena),
-          toNull(acreditacion),
-          toNull(tipo_manual),
-          toNull(codigo_identificacion),
-          toNull(numero_serie),
-          toNull(tipo),
-          toNull(clasificacion),
-          toNull(manual_usuario),
-          toNull(puesta_en_servicio),
-          toNull(fecha_adquisicion),
-        ]
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO equipos (nombre, modelo, marca, inventario_sena, acreditacion, tipo_manual, codigo_identificacion, numero_serie, tipo, clasificacion, manual_usuario, puesta_en_servicio, fecha_adquisicion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(nombre).trim(),
+        toNull(modelo),
+        toNull(marca),
+        toNull(inventario_sena),
+        toNull(acreditacion),
+        toNull(tipo_manual),
+        toNull(codigo_identificacion),
+        toNull(numero_serie),
+        toNull(tipo),
+        toNull(clasificacion),
+        toNull(manual_usuario),
+        toNull(puesta_en_servicio),
+        toNull(fecha_adquisicion),
+      ]
+    );
+    const id = result.insertId;
+
+    // REGISTRO DE LOG - Con req.user.id
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'CREAR', 'EQUIPOS']
       );
-      const id = result.insertId;
-      res.status(201).json({ id, nombre: String(nombre).trim(), modelo: toNull(modelo), marca: toNull(marca) });
-    } catch (err) {
-      console.error('Error POST /api/equipos:', err);
-      res.status(500).json({ message: 'Error creando equipo' });
+
+      // REGISTRO DE MOVIMIENTO
+      await pool.query(
+        'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+        ['EQUIPO', id.toString(), req.user.id, 'ENTRADA']
+      );
     }
-  },
+
+    res.status(201).json({ id, nombre: String(nombre).trim(), modelo: toNull(modelo), marca: toNull(marca) });
+  } catch (err) {
+    console.error('Error POST /api/equipos:', err);
+    res.status(500).json({ message: 'Error creando equipo' });
+  }
+},
+
 
   // PUT /api/equipos/:id
-  updateEquipo: async (req, res) => {
-    const { id } = req.params;
-    const {
-      nombre,
-      modelo,
-      marca,
-      inventario_sena,
-      acreditacion,
-      tipo_manual,
-      codigo_identificacion,
-      numero_serie,
-      tipo,
-      clasificacion,
-      manual_usuario,
-      puesta_en_servicio,
-      fecha_adquisicion,
-    } = req.body || {};
+updateEquipo: async (req, res) => {
+  const { id } = req.params;
+  const {
+    nombre,
+    modelo,
+    marca,
+    inventario_sena,
+    acreditacion,
+    tipo_manual,
+    codigo_identificacion,
+    numero_serie,
+    tipo,
+    clasificacion,
+    manual_usuario,
+    puesta_en_servicio,
+    fecha_adquisicion,
+  } = req.body || {};
 
-    try {
-      const [result] = await pool.query(
-        `UPDATE equipos
-         SET nombre = ?, modelo = ?, marca = ?, inventario_sena = ?, acreditacion = ?, tipo_manual = ?, codigo_identificacion = ?, numero_serie = ?, tipo = ?, clasificacion = ?, manual_usuario = ?, puesta_en_servicio = ?, fecha_adquisicion = ?
-         WHERE id = ?`,
-        [
-          toNull(nombre),
-          toNull(modelo),
-          toNull(marca),
-          toNull(inventario_sena),
-          toNull(acreditacion),
-          toNull(tipo_manual),
-          toNull(codigo_identificacion),
-          toNull(numero_serie),
-          toNull(tipo),
-          toNull(clasificacion),
-          toNull(manual_usuario),
-          toNull(puesta_en_servicio),
-          toNull(fecha_adquisicion),
-          id,
-        ]
+  try {
+    const [result] = await pool.query(
+      `UPDATE equipos
+       SET nombre = ?, modelo = ?, marca = ?, inventario_sena = ?, acreditacion = ?, tipo_manual = ?, codigo_identificacion = ?, numero_serie = ?, tipo = ?, clasificacion = ?, manual_usuario = ?, puesta_en_servicio = ?, fecha_adquisicion = ?
+       WHERE id = ?`,
+      [
+        toNull(nombre),
+        toNull(modelo),
+        toNull(marca),
+        toNull(inventario_sena),
+        toNull(acreditacion),
+        toNull(tipo_manual),
+        toNull(codigo_identificacion),
+        toNull(numero_serie),
+        toNull(tipo),
+        toNull(clasificacion),
+        toNull(manual_usuario),
+        toNull(puesta_en_servicio),
+        toNull(fecha_adquisicion),
+        id,
+      ]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+    // REGISTRO DE LOG - Con req.user.id
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'ACTUALIZAR', 'EQUIPOS']
       );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      res.json({ message: 'Actualizado' });
-    } catch (err) {
-      console.error('Error PUT /api/equipos/:id', err);
-      res.status(500).json({ message: 'Error actualizando equipo' });
     }
-  },
+
+    res.json({ message: 'Actualizado' });
+  } catch (err) {
+    console.error('Error PUT /api/equipos/:id', err);
+    res.status(500).json({ message: 'Error actualizando equipo' });
+  }
+},
 
   // DELETE /api/equipos/:id
-  deleteEquipo: async (req, res) => {
-    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ message: 'No tienes permisos para eliminar equipos' });
+deleteEquipo: async (req, res) => {
+  if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+    return res.status(403).json({ message: 'No tienes permisos para eliminar equipos' });
+  }
+  const { id } = req.params;
+  try {
+    const [result] = await pool.query('DELETE FROM equipos WHERE id = ?', [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+    // REGISTRO DE LOG - Con req.user.id
+    if (req.user && req.user.id) {
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        [req.user.id, 'ELIMINAR', 'EQUIPOS']
+      );
     }
-    const { id } = req.params;
-    try {
-      const [result] = await pool.query('DELETE FROM equipos WHERE id = ?', [id]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      res.json({ message: 'Eliminado' });
-    } catch (err) {
-      console.error('Error DELETE /api/equipos/:id', err);
-      res.status(500).json({ message: 'Error eliminando equipo' });
-    }
-  },
+
+    res.json({ message: 'Eliminado' });
+  } catch (err) {
+    console.error('Error DELETE /api/equipos/:id', err);
+    res.status(500).json({ message: 'Error eliminando equipo' });
+  }
+},
 
   // POST /api/equipos/:id/mantenimientos
   createMantenimientoEquipo: async (req, res) => {
