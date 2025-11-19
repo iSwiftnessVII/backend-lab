@@ -478,40 +478,59 @@ deleteCatalogo: async (req, res) => {
   getReactivos: async (req, res) => {
     const q = (req.query.q || '').trim().toLowerCase();
     let limit = parseInt(req.query.limit, 10);
+    let offset = parseInt(req.query.offset, 10);
     if (isNaN(limit) || limit <= 0) limit = 0;
+    if (isNaN(offset) || offset < 0) offset = 0;
     if (limit > 500) limit = 500;
-    
+
     try {
-      if (!q) {
-        if (limit > 0) {
-          const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC LIMIT ?', [limit]);
+      // Base SELECT y WHERE dinámico
+      const baseSelect = 'SELECT * FROM reactivos';
+      const whereClause = q ? ` WHERE LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?` : '';
+      const orderClause = ' ORDER BY fecha_creacion DESC';
+
+      // Sin límite: devolver array completo (comportamiento existente)
+      if (limit === 0) {
+        if (!q) {
+          const [rows] = await pool.query(baseSelect + orderClause);
           return res.json(rows);
         } else {
-          const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC');
-          return res.json(rows);
+          const params = [likeParam(q), likeParam(q), likeParam(q), likeParam(q)];
+          const [rows] = await pool.query(baseSelect + whereClause + orderClause, params);
+            return res.json(rows);
         }
       }
-      
-      if (limit > 0) {
-        const [rows] = await pool.query(
-          `SELECT * FROM reactivos
-           WHERE LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?
-           ORDER BY fecha_creacion DESC LIMIT ?`,
-          [likeParam(q), likeParam(q), likeParam(q), likeParam(q), limit]
-        );
-        return res.json(rows);
+
+      // Con límite: devolver objeto { rows, total }
+      let total = 0;
+      if (!q) {
+        const [countRows] = await pool.query('SELECT COUNT(*) AS total FROM reactivos');
+        total = countRows[0]?.total || 0;
+        const [rows] = await pool.query(baseSelect + orderClause + ' LIMIT ? OFFSET ?', [limit, offset]);
+        return res.json({ rows, total });
       } else {
-        const [rows] = await pool.query(
-          `SELECT * FROM reactivos
-           WHERE LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?
-           ORDER BY fecha_creacion DESC`,
-          [likeParam(q), likeParam(q), likeParam(q), likeParam(q)]
-        );
-        return res.json(rows);
+        const countSql = 'SELECT COUNT(*) AS total FROM reactivos' + whereClause;
+        const params = [likeParam(q), likeParam(q), likeParam(q), likeParam(q)];
+        const [countRows] = await pool.query(countSql, params);
+        total = countRows[0]?.total || 0;
+        const [rows] = await pool.query(baseSelect + whereClause + orderClause + ' LIMIT ? OFFSET ?', [...params, limit, offset]);
+        return res.json({ rows, total });
       }
     } catch (err) {
       console.error('Error GET / (reactivos):', err);
       res.status(500).json({ message: 'Error listando reactivos' });
+    }
+  },
+
+  // GET /api/reactivos/total - devuelve solo el total de filas (uso liviano para fallback en frontend)
+  getReactivosTotal: async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT COUNT(*) AS total FROM reactivos');
+      const total = rows[0]?.total || 0;
+      res.json({ total });
+    } catch (err) {
+      console.error('Error GET /total (reactivos):', err);
+      res.status(500).json({ message: 'Error obteniendo total de reactivos' });
     }
   },
 
