@@ -30,4 +30,16 @@ router.post('/:id/verificaciones', equiposController.createVcc);
 // GET /api/equipos/:id/verificaciones
 router.get('/:id/verificaciones', equiposController.getVcc);
 
+// POST /api/equipos/:id/historial (historial instrumento)
+router.post('/:id/historial', equiposController.createHistorialEquipo);
+
+// GET /api/equipos/:id/historial
+router.get('/:id/historial', equiposController.getHistorialEquipo);
+
+// GET /api/equipos/:id/intervalos (listar intervalos de calibración del equipo)
+router.get('/:id/intervalos', verifyToken, equiposController.getIntervalosEquipo);
+
+// POST /api/equipos/:id/intervalos (crear intervalo de calibración)
+router.post('/:id/intervalos', verifyToken, equiposController.createIntervaloEquipo);
+
 module.exports = router;

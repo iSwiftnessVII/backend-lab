@@ -26,6 +26,27 @@ async function ensureVccTable() {
   `);
 }
 
+async function ensureHistorialTable() {
+  // Crea la tabla historial_instrumento si no existe (según esquema proporcionado)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS historial_instrumento (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      equipo_id INT NOT NULL,
+      numero INT NULL,
+      fecha DATE NULL,
+      tipo_historial VARCHAR(100) NULL,
+      codigo_registro VARCHAR(100) NULL,
+      tolerancia_g DECIMAL(10,4) NULL,
+      tolerancia_error_g DECIMAL(10,4) NULL,
+      incertidumbre_u DECIMAL(10,4) NULL,
+      realizo VARCHAR(150) NULL,
+      superviso VARCHAR(150) NULL,
+      observaciones TEXT NULL,
+      INDEX idx_hist_equipo (equipo_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
 const equiposController = {
   // GET /api/equipos?q=&limit=&offset=
   getEquipos: async (req, res) => {
@@ -367,6 +388,188 @@ const equiposController = {
         sqlMessage: err && err.sqlMessage,
         sqlState: err && err.sqlState
       });
+    }
+  },
+
+  // POST /api/equipos/:id/historial (historial instrumento)
+  createHistorialEquipo: async (req, res) => {
+    try { await ensureHistorialTable(); } catch (e) { /* ignore */ }
+    const { id } = req.params; // equipo_id
+    const {
+      numero,
+      fecha,
+      tipo_historial,
+      codigo_registro,
+      tolerancia_g,
+      tolerancia_error_g,
+      incertidumbre_u,
+      realizo,
+      superviso,
+      observaciones,
+    } = req.body || {};
+
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+
+    // Normalizar decimales (permitir null / '')
+    function normDec(v) {
+      if (v === undefined || v === null || String(v).trim() === '') return null;
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    }
+
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO historial_instrumento
+          (equipo_id, numero, fecha, tipo_historial, codigo_registro, tolerancia_g, tolerancia_error_g, incertidumbre_u, realizo, superviso, observaciones)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          equipoIdNum,
+          numero === undefined || numero === null || String(numero).trim() === '' ? null : parseInt(numero, 10),
+          toNull(fecha),
+          toNull(tipo_historial && String(tipo_historial).slice(0,100)),
+          toNull(codigo_registro && String(codigo_registro).slice(0,100)),
+          normDec(tolerancia_g),
+          normDec(tolerancia_error_g),
+            normDec(incertidumbre_u),
+          toNull(realizo && String(realizo).slice(0,150)),
+          toNull(superviso && String(superviso).slice(0,150)),
+          toNull(observaciones),
+        ]
+      );
+      res.status(201).json({ id: result.insertId, equipo_id: equipoIdNum });
+    } catch (err) {
+      console.error('Error POST /api/equipos/:id/historial', err);
+      res.status(500).json({ message: 'Error creando historial de instrumento', code: err && err.code });
+    }
+  },
+
+  // GET /api/equipos/:id/historial
+  getHistorialEquipo: async (req, res) => {
+    try { await ensureHistorialTable(); } catch (e) { /* ignore */ }
+    const { id } = req.params;
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, equipo_id, numero, fecha, tipo_historial, codigo_registro, tolerancia_g, tolerancia_error_g, incertidumbre_u, realizo, superviso, observaciones
+         FROM historial_instrumento WHERE equipo_id = ? ORDER BY id DESC`,
+        [equipoIdNum]
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error('Error GET /api/equipos/:id/historial', err);
+      res.status(500).json({ message: 'Error listando historial de instrumento' });
+    }
+  },
+
+  // GET /api/equipos/:id/intervalos
+  getIntervalosEquipo: async (req, res) => {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS intervalo_calibracion_equipo (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          equipo_id INT NOT NULL,
+          numero INT,
+          unidad_nominal_g DECIMAL(10,4),
+          calibracion_1 VARCHAR(100),
+          fecha_c1 DATE,
+          error_c1_g DECIMAL(10,4),
+          calibracion_2 VARCHAR(100),
+          fecha_c2 DATE,
+          error_c2_g DECIMAL(10,4),
+          diferencia_dias INT,
+          desviacion DECIMAL(10,4),
+          deriva DECIMAL(10,4),
+          tolerancia_g DECIMAL(10,4),
+          intervalo_calibraciones_dias INT,
+          intervalo_calibraciones_anios DECIMAL(10,4),
+          FOREIGN KEY (equipo_id) REFERENCES equipos(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    } catch (e) { /* ignore */ }
+    const { id } = req.params;
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+    try {
+      const [rows] = await pool.query(
+        `SELECT * FROM intervalo_calibracion_equipo WHERE equipo_id = ? ORDER BY id DESC`,
+        [equipoIdNum]
+      );
+      // SIEMPRE retorna 200 y un array (vacío si no hay datos)
+      res.json(rows);
+    } catch (err) {
+      console.error('Error GET /api/equipos/:id/intervalos', err);
+      res.status(500).json({ message: 'Error listando intervalos de calibración' });
+    }
+  },
+
+  // POST /api/equipos/:id/intervalos
+  createIntervaloEquipo: async (req, res) => {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS intervalo_calibracion_equipo (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        equipo_id INT NOT NULL,
+        numero INT,
+        unidad_nominal_g DECIMAL(10,4),
+        calibracion_1 VARCHAR(100),
+        fecha_c1 DATE,
+        error_c1_g DECIMAL(10,4),
+        calibracion_2 VARCHAR(100),
+        fecha_c2 DATE,
+        error_c2_g DECIMAL(10,4),
+        diferencia_dias INT,
+        desviacion DECIMAL(10,4),
+        deriva DECIMAL(10,4),
+        tolerancia_g DECIMAL(10,4),
+        intervalo_calibraciones_dias INT,
+        intervalo_calibraciones_anios DECIMAL(10,4),
+        FOREIGN KEY (equipo_id) REFERENCES equipos(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
+    } catch (e) { /* ignore */ }
+    const { id } = req.params;
+    const equipoIdNum = parseInt(id, 10);
+    if (!equipoIdNum || isNaN(equipoIdNum)) {
+      return res.status(400).json({ message: 'ID de equipo inválido' });
+    }
+    const {
+      numero, unidad_nominal_g, calibracion_1, fecha_c1, error_c1_g,
+      calibracion_2, fecha_c2, error_c2_g, diferencia_dias, desviacion,
+      deriva, tolerancia_g, intervalo_calibraciones_dias, intervalo_calibraciones_anios
+    } = req.body || {};
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO intervalo_calibracion_equipo
+          (equipo_id, numero, unidad_nominal_g, calibracion_1, fecha_c1, error_c1_g, calibracion_2, fecha_c2, error_c2_g, diferencia_dias, desviacion, deriva, tolerancia_g, intervalo_calibraciones_dias, intervalo_calibraciones_anios)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          equipoIdNum,
+          numero,
+          unidad_nominal_g,
+          calibracion_1,
+          fecha_c1,
+          error_c1_g,
+          calibracion_2,
+          fecha_c2,
+          error_c2_g,
+          diferencia_dias,
+          desviacion,
+          deriva,
+          tolerancia_g,
+          intervalo_calibraciones_dias,
+          intervalo_calibraciones_anios
+        ]
+      );
+      res.json({ message: 'Intervalo creado', id: result.insertId });
+    } catch (err) {
+      console.error('Error POST /api/equipos/:id/intervalos', err);
+      res.status(500).json({ message: 'Error creando intervalo' });
     }
   },
 };
