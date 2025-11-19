@@ -9,7 +9,10 @@ const dashboardController = {
         totalInsumos,
         totalReactivos,
         totalSolicitudes,
-        totalClientes
+        totalClientes,
+        totalEquipos,
+        totalPapeleriaCatalogo,
+        totalMaterialesVolumetricos
       ] = await Promise.all([
         // Total insumos
         pool.query('SELECT COUNT(*) as total FROM insumos'),
@@ -21,14 +24,26 @@ const dashboardController = {
         pool.query('SELECT COUNT(*) as total FROM Solicitudes'),
         
         // Total clientes activos
-        pool.query('SELECT COUNT(*) as total FROM clientes WHERE activo = 1')
+        pool.query('SELECT COUNT(*) as total FROM clientes WHERE activo = 1'),
+
+        // Total equipos
+        pool.query('SELECT COUNT(*) as total FROM equipos'),
+
+        // Total papeleria (inventario)
+        pool.query('SELECT COUNT(*) as total FROM papeleria'),
+
+        // Total materiales volumétricos
+        pool.query('SELECT COUNT(*) as total FROM materiales_volumetricos')
       ]);
 
       res.json({
         totalInsumos: totalInsumos[0][0].total,
         totalReactivos: totalReactivos[0][0].total,
         totalSolicitudes: totalSolicitudes[0][0].total,
-        totalClientes: totalClientes[0][0].total
+        totalClientes: totalClientes[0][0].total,
+        totalEquipos: totalEquipos[0][0].total,
+        totalPapeleria: totalPapeleriaCatalogo[0][0].total,
+        totalMaterialesVolumetricos: totalMaterialesVolumetricos[0][0].total
       });
 
     } catch (err) {

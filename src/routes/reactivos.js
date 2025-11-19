@@ -76,6 +76,8 @@ router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCer
 
 // GET /api/reactivos?q=
 router.get('/', reactivosController.getReactivos);
+// GET /api/reactivos/export/excel
+router.get('/export/excel', reactivosController.exportReactivosExcel);
 // GET /api/reactivos/total
 router.get('/total', reactivosController.getReactivosTotal);
 

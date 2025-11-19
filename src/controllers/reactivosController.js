@@ -106,15 +106,12 @@ const reactivosController = {
         'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion) VALUES (?, ?, ?, ?, ?)',
         [codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion || null]
       );
-
-      // REGISTRO DE LOG - Solo si hay usuario autenticado
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
           [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS']
         );
       }
-
       res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion: descripcion || null });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
@@ -126,7 +123,6 @@ const reactivosController = {
   },
 
   // PUT /api/reactivos/catalogo/:codigo
-  // PUT /api/reactivos/catalogo/:codigo
   updateCatalogo: async (req, res) => {
     const { codigo } = req.params;
     const { nombre, tipo_reactivo, clasificacion_sga, descripcion } = req.body || {};
@@ -136,15 +132,12 @@ const reactivosController = {
         [nombre || null, tipo_reactivo || null, clasificacion_sga || null, descripcion || null, codigo]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-
-      // REGISTRO DE LOG - Solo si hay usuario autenticado
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
           [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS']
         );
       }
-
       res.json({ codigo, nombre: nombre || null, tipo_reactivo: tipo_reactivo || null, clasificacion_sga: clasificacion_sga || null, descripcion: descripcion || null });
     } catch (err) {
       console.error('Error PUT /catalogo/:codigo:', err);
@@ -681,6 +674,45 @@ deleteCatalogo: async (req, res) => {
         });
     }
 
+
+  // Exportación Excel de reactivos
+  const ExcelJS = require('exceljs');
+  reactivosController.exportReactivosExcel = async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC');
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Reactivos');
+
+      if (!rows.length) {
+        sheet.addRow(['No hay reactivos']);
+      } else {
+        // Cabeceras dinámicas basadas en keys del primer registro
+        const headers = Object.keys(rows[0]);
+        sheet.addRow(headers);
+        for (const r of rows) {
+          sheet.addRow(headers.map(h => r[h]));
+        }
+        // Estilos simples
+        const headerRow = sheet.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00B8B5' } };
+          cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+        });
+        sheet.columns.forEach(col => { col.width = Math.min(40, Math.max(12, col.header ? String(col.header).length + 2 : 15)); });
+      }
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      const filename = 'reactivos_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.xlsx';
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error('Error exportando Excel reactivos:', err);
+      res.status(500).json({ message: 'Error exportando reactivos a Excel' });
+    }
+  };
+
     const { lote } = req.params;
     try {
         const [result] = await pool.query('DELETE FROM reactivos WHERE lote = ?', [lote]);
@@ -699,7 +731,93 @@ deleteCatalogo: async (req, res) => {
         console.error('Error DELETE /:lote (reactivos):', err);
         res.status(500).json({ message: 'Error eliminando reactivo' });
     }
-}
+  },
+
+  // Exportación Excel de reactivos (propiedad del controlador)
+  exportReactivosExcel: async (req, res) => {
+    try {
+      const ExcelJS = require('exceljs');
+
+      // Datos base de reactivos
+      const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC');
+
+      // Cargar catálogos para mapear *_id a nombre
+      const [tipos] = await pool.query('SELECT id, nombre FROM tipo_reactivo');
+      const [clasif] = await pool.query('SELECT id, nombre FROM clasificacion_sga');
+      const [unidades] = await pool.query('SELECT id, nombre FROM unidades');
+      const [estado] = await pool.query('SELECT id, nombre FROM estado_fisico');
+      const [recipiente] = await pool.query('SELECT id, nombre FROM tipo_recipiente');
+      const [almacen] = await pool.query('SELECT id, nombre FROM almacenamiento');
+
+      // Construir diccionarios id -> nombre
+      const toMap = (arr) => {
+        const m = {};
+        for (const it of arr || []) m[it.id] = it.nombre;
+        return m;
+      };
+      const mapTipo = toMap(tipos);
+      const mapClasif = toMap(clasif);
+      const mapUnidad = toMap(unidades);
+      const mapEstado = toMap(estado);
+      const mapRecipiente = toMap(recipiente);
+      const mapAlmacen = toMap(almacen);
+
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Reactivos');
+
+      if (!rows.length) {
+        sheet.addRow(['No hay reactivos']);
+      } else {
+        // Cabeceras dinámicas basadas en claves del primer registro
+        const headers = Object.keys(rows[0]);
+        sheet.addRow(headers);
+
+        // Escribir filas, reemplazando *_id por su nombre
+        for (const r of rows) {
+          const rowValues = headers.map((h) => {
+            const v = r[h];
+            switch (h) {
+              case 'tipo_id':
+                return v != null ? (mapTipo[v] ?? v) : v;
+              case 'clasificacion_id':
+                return v != null ? (mapClasif[v] ?? v) : v;
+              case 'unidad_id':
+                return v != null ? (mapUnidad[v] ?? v) : v;
+              case 'estado_id':
+                return v != null ? (mapEstado[v] ?? v) : v;
+              case 'tipo_recipiente_id':
+                return v != null ? (mapRecipiente[v] ?? v) : v;
+              case 'almacenamiento_id':
+                return v != null ? (mapAlmacen[v] ?? v) : v;
+              default:
+                return v;
+            }
+          });
+          sheet.addRow(rowValues);
+        }
+
+        // Estilos de encabezado y ancho de columnas
+        const headerRow = sheet.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.eachCell((cell) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00B8B5' } };
+          cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+        });
+        sheet.columns.forEach((col) => {
+          col.width = Math.min(40, Math.max(12, col.header ? String(col.header).length + 2 : 15));
+        });
+      }
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      const filename = 'reactivos_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.xlsx';
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error('Error exportando Excel reactivos:', err);
+      res.status(500).json({ message: 'Error exportando reactivos a Excel' });
+    }
+  }
 };
 
 module.exports = reactivosController;
