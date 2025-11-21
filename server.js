@@ -14,6 +14,7 @@ const equiposRoutes = require('./src/routes/equipos');
 const dashboardRoutes = require('./src/routes/dashboard');
 const materialesVolRoutes = require('./src/routes/materialesVolumetricos');
 const logsRoutes = require('./src/routes/logs');
+const reportesRoutes = require('./src/routes/reportes');
 
 const app = express();
 let desiredPort = parseInt(process.env.PORT, 10) || 4000;
@@ -42,6 +43,7 @@ app.use('/api/equipos', equiposRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/materiales-volumetricos', materialesVolRoutes);
 app.use('/api/logs', logsRoutes);
+app.use('/api/reportes', reportesRoutes);
 
 function logEquiposRoutes() {
   try {
