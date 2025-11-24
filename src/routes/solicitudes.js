@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const solicitudesController = require('../controllers/solicitudesController');
+// ---------- DEPARTAMENTOS Y CIUDADES ----------
+router.get('/departamentos', solicitudesController.getDepartamentos);
+router.get('/ciudades', solicitudesController.getCiudades);
 const { verifyToken } = require('../middleware/jwt');
 
 // ---------- CLIENTES CRUD ----------

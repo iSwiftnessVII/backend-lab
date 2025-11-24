@@ -3,12 +3,43 @@ const pool = require('../config/db');
 const solicitudesController = {
   // ---------- CLIENTES CRUD ----------
 
+    // ---------- DEPARTAMENTOS Y CIUDADES ----------
+    // Listar departamentos
+    getDepartamentos: async (req, res) => {
+      try {
+        const [rows] = await pool.query('SELECT codigo, nombre FROM departamentos ORDER BY nombre ASC');
+        res.json(rows);
+      } catch (err) {
+        console.error('GET /departamentos error', err);
+        res.status(500).json({ message: 'Error obteniendo departamentos' });
+      }
+    },
+
+    // Listar ciudades, opcionalmente filtradas por departamento
+    getCiudades: async (req, res) => {
+      const codigoDepartamento = req.query.departamento;
+      try {
+        let query = 'SELECT codigo, nombre, codigo_departamento FROM ciudades';
+        let params = [];
+        if (codigoDepartamento) {
+          query += ' WHERE codigo_departamento = ?';
+          params.push(codigoDepartamento);
+        }
+        query += ' ORDER BY nombre ASC';
+        const [rows] = await pool.query(query, params);
+        res.json(rows);
+      } catch (err) {
+        console.error('GET /ciudades error', err);
+        res.status(500).json({ message: 'Error obteniendo ciudades' });
+      }
+    },
+
   // List clientes
   getClientes: async (req, res) => {
     const q = req.query.q || '';
     try {
       const [rows] = await pool.query(
-        `SELECT id_cliente, nombre_solicitante, numero_identificacion, correo_electronico, ciudad, activo
+        `SELECT id_cliente, nombre_solicitante, numero_identificacion, correo_electronico, id_ciudad, id_departamento, activo
          FROM clientes
          WHERE nombre_solicitante LIKE ? OR correo_electronico LIKE ?
          ORDER BY id_cliente DESC
@@ -45,7 +76,7 @@ const solicitudesController = {
       const sexoVal = body.sexo || 'Otro';
 
       const [result] = await pool.query(
-        `INSERT INTO clientes (numero, fecha_vinculacion, tipo_usuario, razon_social, nit, nombre_solicitante, tipo_identificacion, numero_identificacion, sexo, tipo_poblacion, direccion, ciudad, departamento, celular, telefono, correo_electronico, tipo_vinculacion, registro_realizado_por, observaciones)
+        `INSERT INTO clientes (numero, fecha_vinculacion, tipo_usuario, razon_social, nit, nombre_solicitante, tipo_identificacion, numero_identificacion, sexo, tipo_poblacion, direccion, id_ciudad, id_departamento, celular, telefono, correo_electronico, tipo_vinculacion, registro_realizado_por, observaciones)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           numeroVal,
@@ -59,8 +90,8 @@ const solicitudesController = {
           sexoVal,
           body.tipo_poblacion || null,
           body.direccion || null,
-          body.ciudad || null,
-          body.departamento || null,
+          body.id_ciudad || null,
+          body.id_departamento || null,
           body.celular || null,
           body.telefono || null,
           body.correo_electronico || null,
@@ -187,6 +218,29 @@ deleteCliente: async (req, res) => {
     if (!b.id_cliente) return res.status(400).json({ message: 'Missing id_cliente' });
 
     try {
+      // Obtener año vigente
+      const fechaActual = new Date();
+      const year = fechaActual.getFullYear();
+      // Buscar el último consecutivo para el tipo y año
+      let consecutivo = 1;
+      if (b.codigo && b.codigo.length >= 2) {
+        const tipo = b.codigo;
+        const [rows] = await pool.query(
+          'SELECT codigo FROM Solicitudes WHERE codigo LIKE ? ORDER BY id_solicitud DESC LIMIT 1',
+          [`${tipo}-${year}-%`]
+        );
+        if (rows.length > 0) {
+          // Extraer el consecutivo del último código
+          const lastCodigo = rows[0].codigo;
+          const match = lastCodigo.match(/^(\w{2})-(\d{4})-(\d{2,})$/);
+          if (match) {
+            consecutivo = parseInt(match[3], 10) + 1;
+          }
+        }
+      }
+      // Formato: tipo-año-consecutivo (ej: EN-2025-01)
+      const codigoSolicitud = `${b.codigo}-${year}-${String(consecutivo).padStart(2, '0')}`;
+
       let numeroSol = b.numero_solicitud || null;
       if (!numeroSol) {
         try {
@@ -202,7 +256,7 @@ deleteCliente: async (req, res) => {
         [
           numeroSol,
           b.id_cliente,
-          b.codigo || null,
+          codigoSolicitud,
           b.fecha_solicitud || null,
           b.nombre_muestra_producto || null,
           b.lote_producto || null,
@@ -238,7 +292,7 @@ deleteCliente: async (req, res) => {
         );
       }
 
-      res.status(201).json({ id_solicitud: result.insertId });
+      res.status(201).json({ id_solicitud: result.insertId, numero_solicitud: numeroSol });
     } catch (err) {
       console.error('POST /solicitudes error', err);
       res.status(500).json({ message: 'Internal server error' });
