@@ -1,3 +1,16 @@
+-- =====================================
+-- TABLA: Insumos
+-- =====================================
+
+
+CREATE TABLE catalogo_insumos (
+    item INT PRIMARY KEY,
+    nombre VARCHAR(200) NOT NULL,
+    descripcion TEXT,
+    imagen MEDIUMBLOB  -- Almacenará los datos binarios de la imagen
+);
+
+
 CREATE TABLE insumos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     item_catalogo INT NOT NULL, -- Columna para referenciar el catálogo
@@ -13,12 +26,4 @@ CREATE TABLE insumos (
     observaciones TEXT,
     
     FOREIGN KEY (item_catalogo) REFERENCES catalogo_insumos(item)
-);
-
-CREATE TABLE catalogo_insumos (
-    item INT PRIMARY KEY,
-    nombre VARCHAR(200) NOT NULL,
-    descripcion TEXT,
-    -- Nueva columna para la imagen (BLOB)
-    imagen MEDIUMBLOB  -- Almacenará los datos binarios de la imagen
 );

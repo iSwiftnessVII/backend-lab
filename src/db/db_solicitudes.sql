@@ -1,6 +1,20 @@
--- Tabla principal de usuarios (clientes)
-CREATE TABLE usuarios (
-    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+
+CREATE TABLE departamentos (
+    codigo VARCHAR(10) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL UNIQUE
+);
+
+
+CREATE TABLE ciudades (
+    codigo VARCHAR(10) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    codigo_departamento VARCHAR(10) NOT NULL,
+    FOREIGN KEY (codigo_departamento) REFERENCES departamentos(codigo)
+);
+
+
+CREATE TABLE clientes (
+    id_cliente INT AUTO_INCREMENT PRIMARY KEY,
     numero INT NOT NULL UNIQUE,
     fecha_vinculacion DATE NOT NULL,
     tipo_usuario ENUM('Emprendedor', 'Persona Natural', 'Persona Jurídica', 'Aprendiz SENA', 'Instructor SENA', 'Centros SENA') NOT NULL,
@@ -12,8 +26,8 @@ CREATE TABLE usuarios (
     sexo ENUM('M', 'F', 'Otro') NOT NULL,
     tipo_poblacion VARCHAR(100),
     direccion VARCHAR(255),
-    ciudad VARCHAR(100),
-    departamento VARCHAR(100),
+    id_ciudad VARCHAR(10),  -- Debe coincidir con ciudades.codigo
+    id_departamento VARCHAR(10),  -- Debe coincidir con departamentos.codigo
     celular VARCHAR(20),
     telefono VARCHAR(20),
     correo_electronico VARCHAR(255),
@@ -22,8 +36,11 @@ CREATE TABLE usuarios (
     observaciones TEXT,
     activo BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_ciudad) REFERENCES ciudades(codigo) ON DELETE RESTRICT,
+    FOREIGN KEY (id_departamento) REFERENCES departamentos(codigo) ON DELETE RESTRICT
 );
+
 
 -- Tabla para tipos de solicitud
 CREATE TABLE TiposSolicitud (
@@ -38,7 +55,7 @@ CREATE TABLE TiposSolicitud (
 CREATE TABLE Solicitudes (
     id_solicitud INT PRIMARY KEY AUTO_INCREMENT,
     numero_solicitud INT NOT NULL UNIQUE,
-    id_usuario INT NOT NULL,
+    id_cliente INT NOT NULL,
     codigo VARCHAR(50),
     fecha_solicitud DATE,
     tipo_solicitud VARCHAR(10), -- Ahora referencia el código del tipo
@@ -70,56 +87,8 @@ CREATE TABLE Solicitudes (
     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE RESTRICT,
+    FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente) ON DELETE RESTRICT,
     FOREIGN KEY (tipo_solicitud) REFERENCES TiposSolicitud(codigo_tipo)
-);
-
-
--- El resto de las tablas se mantienen igual...
-CREATE TABLE TiposMuestra (
-    id_tipo_muestra INT PRIMARY KEY AUTO_INCREMENT,
-    nombre_tipo VARCHAR(100) NOT NULL,
-    descripcion TEXT
-);
-
-CREATE TABLE CondicionesEmpaque (
-    id_condicion_empaque INT PRIMARY KEY AUTO_INCREMENT,
-    nombre_condicion VARCHAR(100) NOT NULL,
-    descripcion TEXT
-);
-
-CREATE TABLE TiposAnalisis (
-    id_tipo_analisis INT PRIMARY KEY AUTO_INCREMENT,
-    nombre_analisis VARCHAR(255) NOT NULL,
-    descripcion TEXT,
-    categoria VARCHAR(100)
-);
-
-CREATE TABLE DiasFestivos (
-    id_dia_festivo INT PRIMARY KEY AUTO_INCREMENT,
-    fecha_festivo DATE NOT NULL,
-    nombre_festivo VARCHAR(255),
-    tipo_festivo VARCHAR(100)
-);
-
--- Tablas relacionadas (se mantienen igual)
-CREATE TABLE SolicitudesAnalisis (
-    id_solicitud_analisis INT PRIMARY KEY AUTO_INCREMENT,
-    id_solicitud INT,
-    id_tipo_analisis INT,
-    orden_analisis INT,
-    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(id_solicitud) ON DELETE CASCADE,
-    FOREIGN KEY (id_tipo_analisis) REFERENCES TiposAnalisis(id_tipo_analisis)
-);
-
-CREATE TABLE SeguimientoOfertas (
-    id_seguimiento INT PRIMARY KEY AUTO_INCREMENT,
-    id_solicitud INT,
-    fecha_seguimiento DATE,
-    tipo_seguimiento VARCHAR(100),
-    observaciones TEXT,
-    resultado_seguimiento VARCHAR(100),
-    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(id_solicitud) ON DELETE CASCADE
 );
 
 CREATE TABLE ResultadosEncuestas (
