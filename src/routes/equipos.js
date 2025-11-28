@@ -20,4 +20,7 @@ router.get('/', equiposController.listarEquipos);
 // ✅ NUEVA RUTA: Obtener equipo completo por código
 router.get('/completo/:codigo', equiposController.obtenerEquipoCompleto);
 
+// ✅ AGREGAR ESTA RUTA DESPUÉS DE LAS EXISTENTES
+router.get('/fichas-tecnicas', equiposController.obtenerFichasTecnicas);
+
 module.exports = router;

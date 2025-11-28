@@ -1,3 +1,5 @@
+const pool = require('../config/db');
+
 // Registrar intervalo de equipo
 exports.crearIntervalo = async (req, res) => {
   try {
@@ -44,9 +46,10 @@ exports.crearIntervalo = async (req, res) => {
     res.status(201).json({ message: 'Intervalo registrado correctamente' });
   } catch (error) {
     console.error('Error al registrar intervalo:', error);
-    res.status(500).json({ message: 'Error al registrar intervalo', error });
+    res.status(500).json({ message: 'Error al registrar intervalo', error: error.message });
   }
 };
+
 // Registrar historial de equipo
 exports.crearHistorial = async (req, res) => {
   try {
@@ -85,10 +88,9 @@ exports.crearHistorial = async (req, res) => {
     res.status(201).json({ message: 'Historial registrado correctamente' });
   } catch (error) {
     console.error('Error al registrar historial:', error);
-    res.status(500).json({ message: 'Error al registrar historial', error });
+    res.status(500).json({ message: 'Error al registrar historial', error: error.message });
   }
 };
-const pool = require('../config/db');
 
 // Registrar un nuevo equipo
 exports.crearEquipo = async (req, res) => {
@@ -158,7 +160,7 @@ exports.crearEquipo = async (req, res) => {
     res.status(201).json({ message: 'Equipo registrado correctamente' });
   } catch (error) {
     console.error('Error al registrar equipo:', error);
-    res.status(500).json({ message: 'Error al registrar equipo', error });
+    res.status(500).json({ message: 'Error al registrar equipo', error: error.message });
   }
 };
 
@@ -199,7 +201,7 @@ exports.listarEquipos = async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error('Error al listar equipos:', error);
-    res.status(500).json({ message: 'Error al listar equipos', error });
+    res.status(500).json({ message: 'Error al listar equipos', error: error.message });
   }
 };
 
@@ -274,7 +276,7 @@ exports.crearFichaTecnica = async (req, res) => {
     res.status(201).json({ message: 'Ficha técnica registrada correctamente' });
   } catch (error) {
     console.error('Error al registrar ficha técnica:', error);
-    res.status(500).json({ message: 'Error al registrar ficha técnica', error });
+    res.status(500).json({ message: 'Error al registrar ficha técnica', error: error.message });
   }
 };
 
@@ -283,17 +285,33 @@ exports.obtenerEquipoCompleto = async (req, res) => {
   try {
     const { codigo } = req.params;
     const [rows] = await pool.execute(
-      'SELECT * FROM hv_equipos WHERE codigo_identificacion = ?', 
+      `SELECT codigo_identificacion, nombre, marca, modelo, numero_serie, fecha_adquisicion, puesta_en_servicio, voltaje, frecuencia, accesorios FROM hv_equipos WHERE codigo_identificacion = ?`,
       [codigo]
     );
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Equipo no encontrado' });
     }
-    
+
     res.json(rows[0]);
   } catch (error) {
     console.error('Error al obtener equipo:', error);
-    res.status(500).json({ message: 'Error al obtener equipo', error });
+    res.status(500).json({ message: 'Error al obtener equipo', error: error.message });
   }
 };
+
+// Obtener fichas técnicas
+exports.obtenerFichasTecnicas = async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT codigo_identificador, nombre, marca, modelo 
+      FROM ficha_tecnica_de_equipos 
+      ORDER BY codigo_identificador
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error al obtener fichas técnicas:', error);
+    res.status(500).json({ message: 'Error al obtener fichas técnicas', error: error.message });
+  }
+};
+
