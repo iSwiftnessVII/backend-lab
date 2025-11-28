@@ -17,6 +17,8 @@ const usuariosRoutes = require('./src/routes/usuarios');
 const dashboardRoutes = require('./src/routes/dashboard');
 const logsRoutes = require('./src/routes/logs');
 const reportesRoutes = require('./src/routes/reportes');
+const equiposRoutes = require('./src/routes/equipos');
+
 
 const app = express();
 const PORT = parseInt(process.env.PORT, 10) || 4000;
@@ -123,6 +125,8 @@ app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/reportes', reportesRoutes);
+app.use('/api/equipos', equiposRoutes);
+
 
 // Ruta de bienvenida
 app.get('/', (req, res) => {
