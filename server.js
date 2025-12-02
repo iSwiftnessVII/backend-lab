@@ -32,9 +32,7 @@ const corsOptions = {
       'http://localhost:3000',
       'http://localhost:4000', 
       'http://localhost:4200',
-      // Vercel production URLs
-      'https://*.vercel.app',
-      // Agregar aquí otros orígenes en producción
+      'https://frontend-lab-two.vercel.app',
       process.env.FRONTEND_URL
     ].filter(Boolean);
 
@@ -43,18 +41,20 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Permitir ngrok y Vercel
+    // Permitir sin origin (mobile apps, Postman, etc.), ngrok, Vercel y Render
     if (!origin || 
-        allowedOrigins.some(allowed => origin.includes(allowed.replace('*', ''))) ||
+        allowedOrigins.includes(origin) ||
         origin.includes('ngrok') ||
-        origin.includes('vercel.app')) {
+        origin.includes('vercel.app') ||
+        origin.includes('onrender.com')) {
       callback(null, true);
     } else {
+      console.warn('❌ CORS blocked origin:', origin);
       callback(new Error('No permitido por CORS'));
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
