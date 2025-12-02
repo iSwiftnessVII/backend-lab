@@ -4,7 +4,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
-const rateLimit = require('express-rate-limit');
 require('./src/config/db');
 
 // Importar rutas
@@ -21,7 +20,8 @@ const equiposRoutes = require('./src/routes/equipos');
 
 
 const app = express();
-const PORT = parseInt(process.env.PORT, 10) || 4000;
+// Usa PORT del entorno (Render/hosting). Si no existe, por defecto 42420 en local.
+const PORT = parseInt(process.env.PORT, 10) || 42420;
 const MAX_PORT_ATTEMPTS = 5;
 
 // Configuración de CORS
@@ -65,17 +65,7 @@ app.use(helmet({
 app.use(compression());
 app.use(cors(corsOptions));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // Límites diferentes para prod/dev
-  message: {
-    error: 'Demasiadas peticiones desde esta IP, intenta nuevamente en 15 minutos.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use(limiter);
+// Rate limiting deshabilitado a solicitud
 
 // Body parsing con límites
 app.use(express.json({ 
