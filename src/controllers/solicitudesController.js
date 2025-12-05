@@ -1,40 +1,36 @@
 const pool = require('../config/db');
 
 const solicitudesController = {
+  // ---------- DEPARTAMENTOS Y CIUDADES ----------
+  getDepartamentos: async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT codigo, nombre FROM departamentos ORDER BY nombre ASC');
+      res.json(rows);
+    } catch (err) {
+      console.error('GET /departamentos error', err);
+      res.status(500).json({ message: 'Error obteniendo departamentos' });
+    }
+  },
+
+  getCiudades: async (req, res) => {
+    const codigoDepartamento = req.query.departamento;
+    try {
+      let query = 'SELECT codigo, nombre, codigo_departamento FROM ciudades';
+      let params = [];
+      if (codigoDepartamento) {
+        query += ' WHERE codigo_departamento = ?';
+        params.push(codigoDepartamento);
+      }
+      query += ' ORDER BY nombre ASC';
+      const [rows] = await pool.query(query, params);
+      res.json(rows);
+    } catch (err) {
+      console.error('GET /ciudades error', err);
+      res.status(500).json({ message: 'Error obteniendo ciudades' });
+    }
+  },
+
   // ---------- CLIENTES CRUD ----------
-
-    // ---------- DEPARTAMENTOS Y CIUDADES ----------
-    // Listar departamentos
-    getDepartamentos: async (req, res) => {
-      try {
-        const [rows] = await pool.query('SELECT codigo, nombre FROM departamentos ORDER BY nombre ASC');
-        res.json(rows);
-      } catch (err) {
-        console.error('GET /departamentos error', err);
-        res.status(500).json({ message: 'Error obteniendo departamentos' });
-      }
-    },
-
-    // Listar ciudades, opcionalmente filtradas por departamento
-    getCiudades: async (req, res) => {
-      const codigoDepartamento = req.query.departamento;
-      try {
-        let query = 'SELECT codigo, nombre, codigo_departamento FROM ciudades';
-        let params = [];
-        if (codigoDepartamento) {
-          query += ' WHERE codigo_departamento = ?';
-          params.push(codigoDepartamento);
-        }
-        query += ' ORDER BY nombre ASC';
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
-      } catch (err) {
-        console.error('GET /ciudades error', err);
-        res.status(500).json({ message: 'Error obteniendo ciudades' });
-      }
-    },
-
-  // List clientes
   getClientes: async (req, res) => {
     const q = req.query.q || '';
     try {
@@ -53,7 +49,6 @@ const solicitudesController = {
     }
   },
 
-  // Create cliente
   createCliente: async (req, res) => {
     const body = req.body || {};
     const required = ['nombre_solicitante', 'tipo_identificacion', 'numero_identificacion'];
@@ -101,7 +96,6 @@ const solicitudesController = {
         ]
       );
 
-      // REGISTRO DE LOG - MODIFICAR
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
@@ -116,7 +110,6 @@ const solicitudesController = {
     }
   },
 
-  // Get single cliente
   getClienteById: async (req, res) => {
     const id = req.params.id;
     try {
@@ -129,7 +122,6 @@ const solicitudesController = {
     }
   },
 
-  // Update cliente
   updateCliente: async (req, res) => {
     const id = req.params.id;
     const body = req.body || {};
@@ -144,7 +136,6 @@ const solicitudesController = {
       values.push(id);
       await pool.query(`UPDATE clientes SET ${fields.join(', ')} WHERE id_cliente = ?`, values);
 
-      // REGISTRO DE LOG - MODIFICAR
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
@@ -159,50 +150,48 @@ const solicitudesController = {
     }
   },
 
-  // DELETE /api/solicitudes/clientes/:id
-deleteCliente: async (req, res) => {
-  const id = req.params.id;
+  deleteCliente: async (req, res) => {
+    const id = req.params.id;
 
-  try {
-    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ 
-        message: 'No tienes permisos para eliminar clientes. Solo administradores pueden realizar esta acción.' 
-      });
+    try {
+      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ 
+          message: 'No tienes permisos para eliminar clientes. Solo administradores pueden realizar esta acción.' 
+        });
+      }
+
+      const [result] = await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Cliente no encontrado' });
+      }
+
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CLIENTES']
+        );
+      }
+
+      res.json({ deleted: true });
+    } catch (err) {
+      console.error('DELETE /clientes/:id error', err);
+      res.status(500).json({ message: 'Error eliminando cliente' });
     }
-
-    const [result] = await pool.query('DELETE FROM clientes WHERE id_cliente = ?', [id]);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Cliente no encontrado' });
-    }
-
-    // 4. REGISTRAR EL LOG de auditoría (solo si hay usuario)
-    if (req.user && req.user.id) {
-      await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-        [req.user.id, 'ELIMINAR', 'CLIENTES']
-      );
-    }
-
-    res.json({ deleted: true });
-  } catch (err) {
-    console.error('DELETE /clientes/:id error', err);
-    res.status(500).json({ message: 'Error eliminando cliente' });
-  }
-},
+  },
 
   // ---------- SOLICITUDES CRUD ----------
-
-  // List solicitudes
   getSolicitudes: async (req, res) => {
     try {
       const [rows] = await pool.query(
-        `SELECT s.id_solicitud, s.numero_solicitud, s.codigo, s.fecha_solicitud, s.nombre_muestra_producto, s.cantidad_muestras_analizar,
-                s.servicio_viable, s.genero_cotizacion, s.cliente_respondio_encuesta, s.numero_informe_resultados,
-                u.id_cliente, u.nombre_solicitante, u.correo_electronico
+        `SELECT 
+            s.solicitud_id, s.id_cliente, s.tipo_solicitud, s.nombre_muestra, s.fecha_solicitud, s.lote_producto,
+            s.fecha_vencimiento_muestra, s.tipo_muestra, s.tipo_empaque, s.analisis_requerido, s.req_analisis,
+            s.cant_muestras, s.solicitud_recibida, s.fecha_entrega_muestra, s.recibe_personal, s.cargo_personal, s.observaciones,
+            u.nombre_solicitante, u.correo_electronico
          FROM Solicitudes s
          LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
-         ORDER BY s.id_solicitud DESC
+         ORDER BY s.solicitud_id DESC
          LIMIT 500`
       );
       res.json(rows);
@@ -212,79 +201,177 @@ deleteCliente: async (req, res) => {
     }
   },
 
-  // Create solicitud
+  // Joined detail list: Solicitudes + oferta + revision_oferta + seguimiento_encuesta
+  getSolicitudesDetalle: async (req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+           s.solicitud_id,
+           s.id_cliente,
+           s.tipo_solicitud,
+           s.nombre_muestra,
+           s.fecha_solicitud,
+           s.lote_producto,
+           s.fecha_vencimiento_muestra,
+           s.tipo_muestra,
+           s.tipo_empaque,
+           s.analisis_requerido,
+           s.req_analisis,
+           s.cant_muestras,
+           s.solicitud_recibida,
+           s.fecha_entrega_muestra,
+           s.recibe_personal,
+           s.cargo_personal,
+           s.observaciones,
+           u.nombre_solicitante,
+           u.correo_electronico,
+           o.genero_cotizacion,
+           o.valor_cotizacion,
+           o.fecha_envio_oferta,
+           o.realizo_seguimiento_oferta,
+           o.observacion_oferta,
+           r.fecha_limite_entrega,
+           r.Codigo_informe_resultados,
+           r.fecha_envio_resultados,
+           r.servicio_es_viable,
+           e.fecha_encuesta,
+           e.comentarios,
+           e.recomendaria_servicio,
+           e.cliente_respondio,
+           e.solicito_nueva_encuesta
+         FROM Solicitudes s
+         LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+         LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
+         LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
+         LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
+         ORDER BY s.solicitud_id DESC
+         LIMIT 500`
+      );
+      res.json(rows || []);
+    } catch (err) {
+      console.error('GET /solicitudes/detalle/lista error', err);
+      res.status(500).json({ message: 'Error obteniendo detalle de solicitudes' });
+    }
+  },
+
+  getSolicitudDetalleById: async (req, res) => {
+    const id = req.params.id;
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+           s.solicitud_id,
+           s.id_cliente,
+           s.tipo_solicitud,
+           s.nombre_muestra,
+           s.fecha_solicitud,
+           s.lote_producto,
+           s.fecha_vencimiento_muestra,
+           s.tipo_muestra,
+           s.tipo_empaque,
+           s.analisis_requerido,
+           s.req_analisis,
+           s.cant_muestras,
+           s.solicitud_recibida,
+           s.fecha_entrega_muestra,
+           s.recibe_personal,
+           s.cargo_personal,
+           s.observaciones,
+           u.nombre_solicitante,
+           u.correo_electronico,
+           o.genero_cotizacion,
+           o.valor_cotizacion,
+           o.fecha_envio_oferta,
+           o.realizo_seguimiento_oferta,
+           o.observacion_oferta,
+           r.fecha_limite_entrega,
+           r.Codigo_informe_resultados,
+           r.fecha_envio_resultados,
+           r.servicio_es_viable,
+           e.fecha_encuesta,
+           e.comentarios,
+           e.recomendaria_servicio,
+           e.cliente_respondio,
+           e.solicito_nueva_encuesta
+         FROM Solicitudes s
+         LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+         LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
+         LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
+         LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
+         WHERE s.solicitud_id = ?
+         LIMIT 1`,
+        [id]
+      );
+      if (!rows || rows.length === 0) return res.status(404).json({ message: 'Solicitud no encontrada' });
+      res.json(rows[0]);
+    } catch (err) {
+      console.error('GET /solicitudes/detalle/:id error', err);
+      res.status(500).json({ message: 'Error obteniendo detalle de solicitud' });
+    }
+  },
+
   createSolicitud: async (req, res) => {
     const b = req.body || {};
     if (!b.id_cliente) return res.status(400).json({ message: 'Missing id_cliente' });
 
     try {
-      // Obtener año vigente
-      const fechaActual = new Date();
-      const year = fechaActual.getFullYear();
-      // Buscar el último consecutivo para el tipo y año
-      let consecutivo = 1;
-      if (b.codigo && b.codigo.length >= 2) {
-        const tipo = b.codigo;
-        const [rows] = await pool.query(
-          'SELECT codigo FROM Solicitudes WHERE codigo LIKE ? ORDER BY id_solicitud DESC LIMIT 1',
-          [`${tipo}-${year}-%`]
-        );
-        if (rows.length > 0) {
-          // Extraer el consecutivo del último código
-          const lastCodigo = rows[0].codigo;
-          const match = lastCodigo.match(/^(\w{2})-(\d{4})-(\d{2,})$/);
-          if (match) {
-            consecutivo = parseInt(match[3], 10) + 1;
-          }
-        }
-      }
-      // Formato: tipo-año-consecutivo (ej: EN-2025-01)
-      const codigoSolicitud = `${b.codigo}-${year}-${String(consecutivo).padStart(2, '0')}`;
-
-      let numeroSol = b.numero_solicitud || null;
-      if (!numeroSol) {
-        try {
-          const [rmax] = await pool.query('SELECT MAX(numero_solicitud) AS max FROM Solicitudes');
-          const maxNum = (rmax && rmax[0] && rmax[0].max) ? parseInt(rmax[0].max, 10) : 0;
-          numeroSol = maxNum + 1;
-        } catch (e) { numeroSol = 1; }
-      }
-
-      const [result] = await pool.query(
-        `INSERT INTO Solicitudes (numero_solicitud, id_cliente, codigo, fecha_solicitud, nombre_muestra_producto, lote_producto, fecha_vencimiento_producto, tipo_muestra, condiciones_empaque, tipo_analisis_requerido, requiere_varios_analisis, cantidad_muestras_analizar, fecha_estimada_entrega_muestra, puede_suministrar_informacion_adicional, servicio_viable, genero_cotizacion, valor_cotizacion, fecha_envio_oferta, realizo_seguimiento_oferta, observacion_oferta, fecha_limite_entrega_resultados, numero_informe_resultados, fecha_envio_resultados, cliente_respondio_encuesta, solicito_nueva_encuesta, observaciones_generales, mes_solicitud)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          numeroSol,
+      let sql;
+      let params;
+      
+      if (b.solicitud_id) {
+        sql = `INSERT INTO Solicitudes (
+          solicitud_id, id_cliente, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
+          fecha_vencimiento_muestra, tipo_muestra, tipo_empaque, analisis_requerido,
+          req_analisis, cant_muestras, solicitud_recibida, fecha_entrega_muestra,
+          recibe_personal, cargo_personal, observaciones
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        params = [
+          b.solicitud_id,
           b.id_cliente,
-          codigoSolicitud,
+          b.tipo_solicitud || null,
+          b.nombre_muestra || null,
           b.fecha_solicitud || null,
-          b.nombre_muestra_producto || null,
           b.lote_producto || null,
-          b.fecha_vencimiento_producto || null,
+          b.fecha_vencimiento_muestra || null,
           b.tipo_muestra || null,
-          b.condiciones_empaque || null,
-          b.tipo_analisis_requerido || null,
-          b.requiere_varios_analisis ? 1 : 0,
-          b.cantidad_muestras_analizar || null,
-          b.fecha_estimada_entrega_muestra || null,
-          b.puede_suministrar_informacion_adicional ? 1 : 0,
-          b.servicio_viable ? 1 : 0,
-          b.genero_cotizacion ? 1 : 0,
-          b.valor_cotizacion || null,
-          b.fecha_envio_oferta || null,
-          b.realizo_seguimiento_oferta ? 1 : 0,
-          b.observacion_oferta || null,
-          b.fecha_limite_entrega_resultados || null,
-          b.numero_informe_resultados || null,
-          b.fecha_envio_resultados || null,
-          b.cliente_respondio_encuesta ? 1 : 0,
-          b.solicito_nueva_encuesta ? 1 : 0,
-          b.observaciones_generales || null,
-          b.mes_solicitud || null
-        ]
-      );
+          b.tipo_empaque || null,
+          b.analisis_requerido || null,
+          b.req_analisis ? 1 : 0,
+          b.cant_muestras || null,
+          b.solicitud_recibida || null,
+          b.fecha_entrega_muestra || null,
+          b.recibe_personal || null,
+          b.cargo_personal || null,
+          b.observaciones || null
+        ];
+      } else {
+        sql = `INSERT INTO Solicitudes (
+          id_cliente, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
+          fecha_vencimiento_muestra, tipo_muestra, tipo_empaque, analisis_requerido,
+          req_analisis, cant_muestras, solicitud_recibida, fecha_entrega_muestra,
+          recibe_personal, cargo_personal, observaciones
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        params = [
+          b.id_cliente,
+          b.tipo_solicitud || null,
+          b.nombre_muestra || null,
+          b.fecha_solicitud || null,
+          b.lote_producto || null,
+          b.fecha_vencimiento_muestra || null,
+          b.tipo_muestra || null,
+          b.tipo_empaque || null,
+          b.analisis_requerido || null,
+          b.req_analisis ? 1 : 0,
+          b.cant_muestras || null,
+          b.solicitud_recibida || null,
+          b.fecha_entrega_muestra || null,
+          b.recibe_personal || null,
+          b.cargo_personal || null,
+          b.observaciones || null
+        ];
+      }
 
-      // REGISTRO DE LOG - MODIFICAR
+      const [result] = await pool.query(sql, params);
+
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
@@ -292,19 +379,18 @@ deleteCliente: async (req, res) => {
         );
       }
 
-      res.status(201).json({ id_solicitud: result.insertId, numero_solicitud: numeroSol });
+      res.status(201).json({ solicitud_id: result.insertId });
     } catch (err) {
       console.error('POST /solicitudes error', err);
       res.status(500).json({ message: 'Internal server error' });
     }
   },
 
-  // Get single solicitud with cliente
   getSolicitudById: async (req, res) => {
     const id = req.params.id;
     try {
       const [rows] = await pool.query(
-        `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN clientes u ON s.id_cliente = u.id_cliente WHERE s.id_solicitud = ?`,
+        `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN clientes u ON s.id_cliente = u.id_cliente WHERE s.solicitud_id = ?`,
         [id]
       );
       if (!rows.length) return res.status(404).json({ message: 'Not found' });
@@ -315,7 +401,6 @@ deleteCliente: async (req, res) => {
     }
   },
 
-  // Update solicitud
   updateSolicitud: async (req, res) => {
     const id = req.params.id;
     const body = req.body || {};
@@ -328,9 +413,8 @@ deleteCliente: async (req, res) => {
       }
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
-      await pool.query(`UPDATE Solicitudes SET ${fields.join(', ')} WHERE id_solicitud = ?`, values);
+      await pool.query(`UPDATE Solicitudes SET ${fields.join(', ')} WHERE solicitud_id = ?`, values);
 
-      // REGISTRO DE LOG - MODIFICAR
       if (req.user && req.user.id) {
         await pool.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
@@ -345,38 +429,160 @@ deleteCliente: async (req, res) => {
     }
   },
 
-  // DELETE /api/solicitudes/:id  
-deleteSolicitud: async (req, res) => {
-  const id = req.params.id;
-
-  try {
-    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ 
-        message: 'No tienes permisos para eliminar solicitudes. Solo administradores pueden realizar esta acción.' 
-      });
-    }
-
-    const [result] = await pool.query('DELETE FROM Solicitudes WHERE id_solicitud = ?', [id]);
+  // ---------- OFERTA ----------
+  createOrUpdateOferta: async (req, res) => {
+    const id_solicitud = req.params.id_solicitud || req.body.id_solicitud;
+    if (!id_solicitud) return res.status(400).json({ message: 'Missing id_solicitud' });
+    const b = req.body || {};
     
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Solicitud no encontrada' });
-    }
-
-    if (req.user && req.user.id) {
-      await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-        [req.user.id, 'ELIMINAR', 'SOLICITUDES']
+    try {
+      const [update] = await pool.query(
+        `UPDATE oferta SET genero_cotizacion = ?, valor_cotizacion = ?, fecha_envio_oferta = ?, realizo_seguimiento_oferta = ?, observacion_oferta = ?
+         WHERE id_solicitud = ?`,
+        [
+          b.genero_cotizacion ? 1 : 0,
+          b.valor_cotizacion || null,
+          b.fecha_envio_oferta || null,
+          b.realizo_seguimiento_oferta ? 1 : 0,
+          b.observacion_oferta || null,
+          id_solicitud
+        ]
       );
+      
+      if (!update.affectedRows) {
+        await pool.query(
+          `INSERT INTO oferta (id_solicitud, genero_cotizacion, valor_cotizacion, fecha_envio_oferta, realizo_seguimiento_oferta, observacion_oferta)
+           VALUES (?,?,?,?,?,?)`,
+          [
+            id_solicitud,
+            b.genero_cotizacion ? 1 : 0,
+            b.valor_cotizacion || null,
+            b.fecha_envio_oferta || null,
+            b.realizo_seguimiento_oferta ? 1 : 0,
+            b.observacion_oferta || null
+          ]
+        );
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('createOrUpdateOferta error', err);
+      res.status(500).json({ message: 'Internal server error' });
     }
+  },
 
-    res.json({ deleted: true });
-  } catch (err) {
-    console.error('DELETE /solicitudes/:id error', err);
-    res.status(500).json({ message: 'Error eliminando solicitud' });
-  }
-},
+  // ---------- REVISIÓN DE OFERTA ----------
+  createOrUpdateRevision: async (req, res) => {
+    const id_solicitud = req.params.id_solicitud || req.body.id_solicitud;
+    if (!id_solicitud) return res.status(400).json({ message: 'Missing id_solicitud' });
+    const b = req.body || {};
+    
+    try {
+      const [update] = await pool.query(
+        `UPDATE revision_oferta SET fecha_limite_entrega = ?, Codigo_informe_resultados = ?, fecha_envio_resultados = ?, servicio_es_viable = ?
+         WHERE id_solicitud = ?`,
+        [
+          b.fecha_limite_entrega || null,
+          b.Codigo_informe_resultados || null,
+          b.fecha_envio_resultados || null,
+          b.servicio_es_viable ? 1 : 0,
+          id_solicitud
+        ]
+      );
+      
+      if (!update.affectedRows) {
+        await pool.query(
+          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, Codigo_informe_resultados, fecha_envio_resultados, servicio_es_viable)
+           VALUES (?,?,?,?,?)`,
+          [
+            id_solicitud,
+            b.fecha_limite_entrega || null,
+            b.Codigo_informe_resultados || null,
+            b.fecha_envio_resultados || null,
+            b.servicio_es_viable ? 1 : 0
+          ]
+        );
+      }
+      
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('createOrUpdateRevision error', err);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  },
 
-  // Create encuesta
+  // ---------- SEGUIMIENTO ENCUESTA ----------
+  createOrUpdateSeguimientoEncuesta: async (req, res) => {
+    const id_solicitud = req.params.id_solicitud || req.body.id_solicitud;
+    if (!id_solicitud) return res.status(400).json({ message: 'Missing id_solicitud' });
+    const b = req.body || {};
+    
+    try {
+      const [update] = await pool.query(
+        `UPDATE seguimiento_encuesta SET fecha_encuesta = ?, comentarios = ?, recomendaria_servicio = ?, cliente_respondio = ?, solicito_nueva_encuesta = ?
+         WHERE id_solicitud = ?`,
+        [
+          b.fecha_encuesta || null,
+          b.comentarios || null,
+          b.recomendaria_servicio ? 1 : 0,
+          b.cliente_respondio ? 1 : 0,
+          b.solicito_nueva_encuesta ? 1 : 0,
+          id_solicitud
+        ]
+      );
+      
+      if (!update.affectedRows) {
+        await pool.query(
+          `INSERT INTO seguimiento_encuesta (id_solicitud, fecha_encuesta, comentarios, recomendaria_servicio, cliente_respondio, solicito_nueva_encuesta)
+           VALUES (?,?,?,?,?,?)`,
+          [
+            id_solicitud,
+            b.fecha_encuesta || null,
+            b.comentarios || null,
+            b.recomendaria_servicio ? 1 : 0,
+            b.cliente_respondio ? 1 : 0,
+            b.solicito_nueva_encuesta ? 1 : 0
+          ]
+        );
+      }
+      
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('createOrUpdateSeguimientoEncuesta error', err);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  },
+
+  deleteSolicitud: async (req, res) => {
+    const id = req.params.id;
+
+    try {
+      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+        return res.status(403).json({ 
+          message: 'No tienes permisos para eliminar solicitudes. Solo administradores pueden realizar esta acción.' 
+        });
+      }
+
+      const [result] = await pool.query('DELETE FROM Solicitudes WHERE solicitud_id = ?', [id]);
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Solicitud no encontrada' });
+      }
+
+      if (req.user && req.user.id) {
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'SOLICITUDES']
+        );
+      }
+
+      res.json({ deleted: true });
+    } catch (err) {
+      console.error('DELETE /solicitudes/:id error', err);
+      res.status(500).json({ message: 'Error eliminando solicitud' });
+    }
+  },
+
   createEncuesta: async (req, res) => {
     const body = req.body || {};
 
@@ -424,7 +630,6 @@ deleteSolicitud: async (req, res) => {
           );
         }
 
-        // REGISTRO DE LOG - MODIFICAR
         if (req.user && req.user.id) {
           await connection.query(
             'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',

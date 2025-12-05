@@ -41,12 +41,14 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Permitir sin origin (mobile apps, Postman, etc.), ngrok, Vercel y Render
+    // Permitir sin origin (mobile apps, Postman, etc.), ngrok, Vercel, Render y Cloudflare Tunnel
     if (!origin || 
         allowedOrigins.includes(origin) ||
         origin.includes('ngrok') ||
         origin.includes('vercel.app') ||
-        origin.includes('onrender.com')) {
+        origin.includes('onrender.com') ||
+        origin.includes('trycloudflare.com') ||
+        origin.includes('pages.dev')) {
       callback(null, true);
     } else {
       console.warn('❌ CORS blocked origin:', origin);
@@ -187,7 +189,7 @@ app.use((error, req, res, next) => {
 // Función mejorada para iniciar el servidor
 function startServer(port = PORT, attempt = 1) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port)
+    const server = app.listen(port, '0.0.0.0')
       .once('listening', () => {
         console.log(`🎉 Servidor iniciado exitosamente!`);
         console.log(`📍 Puerto: ${port}`);

@@ -475,3 +475,20 @@ exports.eliminarEquipo = async (req, res) => {
   }
 };
 
+// PDFs handlers (stubs to avoid route errors)
+exports.listarPdfsPorEquipo = async (req, res) => {
+  res.status(501).json({ message: 'listarPdfsPorEquipo no implementado' });
+};
+
+exports.subirPdfEquipo = async (req, res) => {
+  res.status(501).json({ message: 'subirPdfEquipo no implementado' });
+};
+
+exports.descargarPdf = async (req, res) => {
+  res.status(501).json({ message: 'descargarPdf no implementado' });
+};
+
+exports.eliminarPdf = async (req, res) => {
+  res.status(501).json({ message: 'eliminarPdf no implementado' });
+};
+

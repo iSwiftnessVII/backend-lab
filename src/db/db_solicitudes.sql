@@ -42,68 +42,63 @@ CREATE TABLE clientes (
 );
 
 
--- Tabla para tipos de solicitud
-CREATE TABLE TiposSolicitud (
-    id_tipo_solicitud INT PRIMARY KEY AUTO_INCREMENT,
-    codigo_tipo VARCHAR(10) NOT NULL UNIQUE,
-    nombre_tipo VARCHAR(100) NOT NULL,
-    descripcion TEXT,
-    activo BOOLEAN DEFAULT TRUE
+CREATE TABLE Solicitudes (
+    solicitud_id INT NOT NULL PRIMARY KEY,
+    id_cliente INT NOT NULL,
+    tipo_solicitud VARCHAR(100),
+    nombre_muestra VARCHAR(255),
+    fecha_solicitud DATE,
+    lote_producto VARCHAR(100),
+    fecha_vencimiento_muestra DATE,
+    tipo_muestra VARCHAR(100),
+    tipo_empaque VARCHAR(100),
+    analisis_requerido VARCHAR(255),
+    req_analisis BOOLEAN,
+    cant_muestras INT,
+    solicitud_recibida VARCHAR(255),
+    fecha_entrega_muestra DATE,
+    recibe_personal VARCHAR(255),
+    cargo_personal VARCHAR(100),
+    observaciones TEXT,
+
+
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente) ON DELETE RESTRICT,
 );
 
--- Tabla principal de solicitudes
-CREATE TABLE Solicitudes (
-    id_solicitud INT PRIMARY KEY AUTO_INCREMENT,
-    numero_solicitud INT NOT NULL UNIQUE,
-    id_cliente INT NOT NULL,
-    codigo VARCHAR(50),
-    fecha_solicitud DATE,
-    tipo_solicitud VARCHAR(10), -- Ahora referencia el código del tipo
-    
-    -- Campos específicos de la solicitud
-    nombre_muestra_producto VARCHAR(255),
-    lote_producto VARCHAR(100),
-    fecha_vencimiento_producto DATE,
-    tipo_muestra VARCHAR(100),
-    condiciones_empaque VARCHAR(100),
-    tipo_analisis_requerido VARCHAR(255),
-    requiere_varios_analisis BOOLEAN,
-    cantidad_muestras_analizar INT,
-    fecha_estimada_entrega_muestra DATE,
-    puede_suministrar_informacion_adicional BOOLEAN,
-    servicio_viable BOOLEAN,
+CREATE TABLE oferta (
+    id_oferta INT AUTO_INCREMENT PRIMARY KEY,
+    id_solicitud INT,
     genero_cotizacion BOOLEAN,
     valor_cotizacion DECIMAL(15,2),
     fecha_envio_oferta DATE,
     realizo_seguimiento_oferta BOOLEAN,
     observacion_oferta TEXT,
-    fecha_limite_entrega_resultados DATE,
-    numero_informe_resultados VARCHAR(100),
-    fecha_envio_resultados DATE,
-    cliente_respondio_encuesta BOOLEAN,
-    solicito_nueva_encuesta BOOLEAN,
-    observaciones_generales TEXT,
-    mes_solicitud INT,
-    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
-    FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente) ON DELETE RESTRICT,
-    FOREIGN KEY (tipo_solicitud) REFERENCES TiposSolicitud(codigo_tipo)
+
+    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
 );
 
-CREATE TABLE ResultadosEncuestas (
+CREATE TABLE revision_oferta (
+    id_revision INT AUTO_INCREMENT PRIMARY KEY,
+    id_solicitud INT,
+    fecha_limite_entrega DATE,
+    Codigo_informe_resultados VARCHAR(255),
+    fecha_envio_resultados DATE,
+    servicio_es_viable BOOLEAN,
+
+    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
+);
+
+CREATE TABLE seguimiento_encuesta (
     id_encuesta INT PRIMARY KEY AUTO_INCREMENT,
     id_solicitud INT,
     fecha_encuesta DATE,
-    puntuacion_satisfaccion INT,
     comentarios TEXT,
     recomendaria_servicio BOOLEAN,
-    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(id_solicitud) ON DELETE CASCADE
-);
+    cliente_respondio BOOLEAN,
+    solicito_nueva_encuesta BOOLEAN,
 
--- Insertar los tipos de solicitud
-INSERT INTO TiposSolicitud (codigo_tipo, nombre_tipo, descripcion) VALUES
-('AF', 'Apoyo Formación', 'Servicios de apoyo a la formación educativa y capacitación'),
-('EN', 'Ensayos', 'Servicios de ensayos de laboratorio y pruebas técnicas'),
-('UI', 'Uso Infraestructura', 'Servicios de uso de infraestructura y equipos especializados'),
-('IA', 'Investigación Aplicada', 'Servicios de investigación aplicada y desarrollo tecnológico');
+    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
+);

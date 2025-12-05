@@ -39,4 +39,11 @@ router.get('/intervalo/list/:codigo', equiposController.listarIntervaloPorEquipo
 // DELETE /api/equipos/:codigo - Eliminar equipo (y dependencias)
 router.delete('/:codigo', equiposController.eliminarEquipo);
 
+// PDFs: listar / subir / descargar / eliminar
+router.get('/pdfs/:codigo', equiposController.listarPdfsPorEquipo);
+const upload = require('../middleware/upload');
+router.post('/pdfs/:codigo', upload.single('file'), equiposController.subirPdfEquipo);
+router.get('/pdfs/download/:id', equiposController.descargarPdf);
+router.delete('/pdfs/:id', equiposController.eliminarPdf);
+
 module.exports = router;
