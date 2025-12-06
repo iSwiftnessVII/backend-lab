@@ -231,7 +231,6 @@ const solicitudesController = {
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.Codigo_informe_resultados,
            r.fecha_envio_resultados,
            r.servicio_es_viable,
            e.fecha_encuesta,
@@ -284,7 +283,6 @@ const solicitudesController = {
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.Codigo_informe_resultados,
            r.fecha_envio_resultados,
            r.servicio_es_viable,
            e.fecha_encuesta,
@@ -479,11 +477,10 @@ const solicitudesController = {
     
     try {
       const [update] = await pool.query(
-        `UPDATE revision_oferta SET fecha_limite_entrega = ?, Codigo_informe_resultados = ?, fecha_envio_resultados = ?, servicio_es_viable = ?
+        `UPDATE revision_oferta SET fecha_limite_entrega = ?, fecha_envio_resultados = ?, servicio_es_viable = ?
          WHERE id_solicitud = ?`,
         [
           b.fecha_limite_entrega || null,
-          b.Codigo_informe_resultados || null,
           b.fecha_envio_resultados || null,
           b.servicio_es_viable ? 1 : 0,
           id_solicitud
@@ -492,12 +489,11 @@ const solicitudesController = {
       
       if (!update.affectedRows) {
         await pool.query(
-          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, Codigo_informe_resultados, fecha_envio_resultados, servicio_es_viable)
-           VALUES (?,?,?,?,?)`,
+          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, fecha_envio_resultados, servicio_es_viable)
+           VALUES (?,?,?,?)`,
           [
             id_solicitud,
             b.fecha_limite_entrega || null,
-            b.Codigo_informe_resultados || null,
             b.fecha_envio_resultados || null,
             b.servicio_es_viable ? 1 : 0
           ]

@@ -84,7 +84,6 @@ CREATE TABLE revision_oferta (
     id_revision INT AUTO_INCREMENT PRIMARY KEY,
     id_solicitud INT,
     fecha_limite_entrega DATE,
-    Codigo_informe_resultados VARCHAR(255),
     fecha_envio_resultados DATE,
     servicio_es_viable BOOLEAN,
 

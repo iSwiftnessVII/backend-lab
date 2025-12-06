@@ -475,20 +475,157 @@ exports.eliminarEquipo = async (req, res) => {
   }
 };
 
-// PDFs handlers (stubs to avoid route errors)
+// PDFs handlers: simple filesystem-backed implementation
+const fs = require('fs').promises;
+const path = require('path');
+
+const UPLOADS_BASE = path.join(__dirname, '..', '..', 'uploads', 'equipos');
+
+async function ensureDir(dir) {
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch (e) {
+    // ignore
+  }
+}
+
+// List PDFs for a given equipo (reads uploads/equipos/<codigo>)
 exports.listarPdfsPorEquipo = async (req, res) => {
-  res.status(501).json({ message: 'listarPdfsPorEquipo no implementado' });
+  try {
+    const { codigo } = req.params;
+    const dir = path.join(UPLOADS_BASE, String(codigo));
+    try {
+      await ensureDir(dir);
+      const files = await fs.readdir(dir);
+      const items = [];
+      // Only consider actual files that are not the metadata JSONs
+      const pdfFiles = files.filter(f => !f.endsWith('.meta.json') && !f.startsWith('.'));
+      for (const f of pdfFiles) {
+        const full = path.join(dir, f);
+        const stat = await fs.stat(full);
+        // Filename stored as <timestamp>_<originalname>
+        const original = f.replace(/^\d+_/, '');
+        // try read metadata JSON
+        let categoria = null;
+        try {
+          const metaPath = path.join(dir, f + '.meta.json');
+          const metaRaw = await fs.readFile(metaPath, 'utf8').catch(() => null);
+          if (metaRaw) {
+            const meta = JSON.parse(metaRaw);
+            categoria = meta.categoria || null;
+          }
+        } catch (e) {
+          categoria = null;
+        }
+        items.push({ id: f, nombre_archivo: original, url: `/api/equipos/pdfs/download/${encodeURIComponent(f)}`, categoria: categoria, size_bytes: stat.size, mime: 'application/pdf', fecha_subida: stat.mtime });
+      }
+      // sort by fecha_subida asc
+      items.sort((a, b) => new Date(a.fecha_subida) - new Date(b.fecha_subida));
+      res.json(items);
+    } catch (e) {
+      // If dir doesn't exist or other error, return empty list
+      return res.json([]);
+    }
+  } catch (error) {
+    console.error('Error listarPdfsPorEquipo:', error);
+    res.status(500).json({ message: 'Error listando PDFs', error: error.message });
+  }
 };
 
+// Upload PDF for equipo
 exports.subirPdfEquipo = async (req, res) => {
-  res.status(501).json({ message: 'subirPdfEquipo no implementado' });
+  try {
+    const { codigo } = req.params;
+    const categoria = req.body.categoria || null;
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'No se recibió archivo' });
+    }
+    const dir = path.join(UPLOADS_BASE, String(codigo));
+    await ensureDir(dir);
+    const originalName = req.file.originalname || 'archivo.pdf';
+    const filename = `${Date.now()}_${originalName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+    const full = path.join(dir, filename);
+    await fs.writeFile(full, req.file.buffer);
+    // write metadata alongside file
+    const meta = {
+      originalName: originalName,
+      categoria: categoria || null,
+      mime: req.file.mimetype || 'application/pdf',
+      size_bytes: req.file.size || (req.file.buffer ? req.file.buffer.length : null),
+      fecha_subida: new Date().toISOString()
+    };
+    const metaPath = path.join(dir, filename + '.meta.json');
+    try { await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8'); } catch (e) { console.warn('No se pudo escribir meta', e); }
+    const stat = await fs.stat(full);
+    const item = { id: filename, nombre_archivo: originalName, categoria: categoria || null, size_bytes: stat.size, mime: req.file.mimetype || 'application/pdf', url: `/api/equipos/pdfs/download/${encodeURIComponent(filename)}`, fecha_subida: stat.mtime };
+    res.status(201).json(item);
+  } catch (error) {
+    console.error('Error subirPdfEquipo:', error);
+    res.status(500).json({ message: 'Error subiendo PDF', error: error.message });
+  }
 };
 
+// Download PDF by filename id
 exports.descargarPdf = async (req, res) => {
-  res.status(501).json({ message: 'descargarPdf no implementado' });
+  try {
+    const { id } = req.params; // this is filename
+    // find file under uploads/equipos subfolders
+    const parts = id.split('_');
+    // We don't know codigo from id, so scan directories (acceptable for small scale)
+    const base = UPLOADS_BASE;
+    let found = null;
+    try {
+      const dirs = await fs.readdir(base);
+      for (const d of dirs) {
+        const candidate = path.join(base, d, id);
+        try {
+          const stat = await fs.stat(candidate);
+          if (stat && stat.isFile()) { found = candidate; break; }
+        } catch (_) { }
+      }
+    } catch (e) {
+      // base may not exist
+    }
+    if (!found) return res.status(404).json({ message: 'Archivo no encontrado' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', (await fs.stat(found)).size);
+    // Stream the file
+    const stream = require('fs').createReadStream(found);
+    stream.on('error', (err) => {
+      console.error('Error reading file', err);
+      res.status(500).end();
+    });
+    stream.pipe(res);
+  } catch (error) {
+    console.error('Error descargarPdf:', error);
+    res.status(500).json({ message: 'Error descargando PDF', error: error.message });
+  }
 };
 
+// Delete PDF by filename id
 exports.eliminarPdf = async (req, res) => {
-  res.status(501).json({ message: 'eliminarPdf no implementado' });
+  try {
+    const { id } = req.params;
+    const base = UPLOADS_BASE;
+    let found = null;
+    try {
+      const dirs = await fs.readdir(base);
+      for (const d of dirs) {
+        const candidate = path.join(base, d, id);
+        try {
+          const stat = await fs.stat(candidate);
+          if (stat && stat.isFile()) { found = candidate; break; }
+        } catch (_) { }
+      }
+    } catch (e) {
+      // base may not exist
+    }
+    if (!found) return res.status(404).json({ message: 'Archivo no encontrado' });
+    await fs.unlink(found);
+    res.json({ message: 'Archivo eliminado' });
+  } catch (error) {
+    console.error('Error eliminarPdf:', error);
+    res.status(500).json({ message: 'Error eliminando PDF', error: error.message });
+  }
 };
 
