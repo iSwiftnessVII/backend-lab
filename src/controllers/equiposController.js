@@ -279,6 +279,50 @@ exports.listarHistorialPorEquipo = async (req, res) => {
   }
 };
 
+// Actualizar registro de historial por equipo y consecutivo
+exports.actualizarHistorial = async (req, res) => {
+  try {
+    const { equipo, consecutivo } = req.params;
+    const body = req.body || {};
+
+    // Build dynamic SET clause
+    const fields = [];
+    const values = [];
+
+    // Allowed updatable columns in historial_hv
+    const allowed = [
+      'fecha', 'tipo_historial', 'codigo_registro', 'tolerancia_g', 'tolerancia_error_g',
+      'incertidumbre_u', 'realizo', 'superviso', 'observaciones'
+    ];
+
+    for (const key of Object.keys(body)) {
+      if (allowed.includes(key)) {
+        fields.push(`${key} = ?`);
+        values.push(body[key]);
+      }
+    }
+
+    if (!fields.length) return res.status(400).json({ message: 'No hay campos para actualizar' });
+
+    values.push(equipo);
+    values.push(consecutivo);
+
+    const sql = `UPDATE historial_hv SET ${fields.join(', ')} WHERE equipo_id = ? AND consecutivo = ?`;
+    const [result] = await pool.execute(sql, values);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Registro no encontrado' });
+    }
+
+    // Return the updated row
+    const [rows] = await pool.execute('SELECT * FROM historial_hv WHERE equipo_id = ? AND consecutivo = ?', [equipo, consecutivo]);
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error actualizando historial:', error);
+    res.status(500).json({ message: 'Error al actualizar historial', error: error.message });
+  }
+};
+
 // Listar intervalo por equipo
 exports.listarIntervaloPorEquipo = async (req, res) => {
   try {
@@ -291,6 +335,49 @@ exports.listarIntervaloPorEquipo = async (req, res) => {
   } catch (error) {
     console.error('Error listando intervalo por equipo:', error);
     res.status(500).json({ message: 'Error listando intervalo', error: error.message });
+  }
+};
+
+// Actualizar registro de intervalo por equipo y consecutivo
+exports.actualizarIntervalo = async (req, res) => {
+  try {
+    const { equipo, consecutivo } = req.params;
+    const body = req.body || {};
+
+    const fields = [];
+    const values = [];
+
+    // Allowed updatable columns in intervalo_hv
+    const allowed = [
+      'unidad_nominal_g', 'calibracion_1', 'fecha_c1', 'error_c1_g',
+      'calibracion_2', 'fecha_c2', 'error_c2_g', 'diferencia_dias', 'desviacion',
+      'deriva', 'tolerancia_g', 'intervalo_calibraciones_dias', 'intervalo_calibraciones_anios'
+    ];
+
+    for (const key of Object.keys(body)) {
+      if (allowed.includes(key)) {
+        fields.push(`${key} = ?`);
+        values.push(body[key]);
+      }
+    }
+
+    if (!fields.length) return res.status(400).json({ message: 'No hay campos para actualizar' });
+
+    values.push(equipo);
+    values.push(consecutivo);
+
+    const sql = `UPDATE intervalo_hv SET ${fields.join(', ')} WHERE equipo_id = ? AND consecutivo = ?`;
+    const [result] = await pool.execute(sql, values);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Registro no encontrado' });
+    }
+
+    const [rows] = await pool.execute('SELECT * FROM intervalo_hv WHERE equipo_id = ? AND consecutivo = ?', [equipo, consecutivo]);
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error actualizando intervalo:', error);
+    res.status(500).json({ message: 'Error al actualizar intervalo', error: error.message });
   }
 };
 

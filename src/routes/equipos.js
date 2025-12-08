@@ -35,6 +35,10 @@ router.get('/intervalo/next/:codigo', equiposController.obtenerNextIntervalo);
 // List historial/intervalo by equipo
 router.get('/historial/list/:codigo', equiposController.listarHistorialPorEquipo);
 router.get('/intervalo/list/:codigo', equiposController.listarIntervaloPorEquipo);
+// PUT /api/equipos/historial/:equipo/:consecutivo - Actualizar registro de historial por equipo+consecutivo
+router.put('/historial/:equipo/:consecutivo', equiposController.actualizarHistorial);
+// PUT /api/equipos/intervalo/:equipo/:consecutivo - Actualizar registro de intervalo por equipo+consecutivo
+router.put('/intervalo/:equipo/:consecutivo', equiposController.actualizarIntervalo);
 
 // DELETE /api/equipos/:codigo - Eliminar equipo (y dependencias)
 router.delete('/:codigo', equiposController.eliminarEquipo);
