@@ -2,7 +2,27 @@ const express = require('express');
 const router = express.Router();
 const volumetricosController = require('../controllers/volumetricosController');
 
-// Material Volumétrico routes
+// Rutas compatibles con frontend Angular (deben ir primero para evitar conflictos)
+// Crear material volumétrico (POST /materiales)
+router.post('/materiales', volumetricosController.crearMaterial);
+
+// Listar materiales (GET /materiales)
+router.get('/materiales', volumetricosController.listarMateriales);
+
+// Listar historial por material (GET /materiales/:codigo/historial)
+router.get('/materiales/:codigo/historial', volumetricosController.listarHistorialPorMaterial);
+
+// Listar intervalo por material (GET /materiales/:codigo/intervalo)
+router.get('/materiales/:codigo/intervalo', volumetricosController.listarIntervaloPorMaterial);
+
+// Actualizar y eliminar material (PUT/DELETE /materiales/:codigo)
+router.put('/materiales/:codigo', volumetricosController.actualizarMaterial);
+router.delete('/materiales/:codigo', volumetricosController.eliminarMaterial);
+
+// Obtener material completo (GET /materiales/:codigo)
+router.get('/materiales/:codigo', volumetricosController.obtenerMaterialCompleto);
+
+// Material Volumétrico routes (rutas genéricas al final)
 router.post('/', volumetricosController.crearMaterial);
 router.get('/', volumetricosController.listarMateriales);
 router.get('/:codigo', volumetricosController.obtenerMaterialCompleto);
