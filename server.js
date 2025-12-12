@@ -18,7 +18,6 @@ const logsRoutes = require('./src/routes/logs');
 const reportesRoutes = require('./src/routes/reportes');
 const equiposRoutes = require('./src/routes/equipos');
 const volumetricosRoutes = require('./src/routes/volumetricos');
-const referenciaRoutes = require('./src/routes/referencia');
 
 
 const app = express();
@@ -126,7 +125,6 @@ app.use('/api/logs', logsRoutes);
 app.use('/api/reportes', reportesRoutes);
 app.use('/api/equipos', equiposRoutes);
 app.use('/api/volumetricos', volumetricosRoutes);
-app.use('/api/material-referencia', referenciaRoutes);
 
 
 // Ruta de bienvenida
@@ -148,7 +146,7 @@ app.get('/', (req, res) => {
       reportes: '/api/reportes',
       equipos: '/api/equipos',
       volumetricos: '/api/volumetricos',
-      referencia: '/api/material-referencia'
+      // referencia endpoint removed
     }
   });
 });
