@@ -382,42 +382,17 @@ exports.actualizarIntervalo = async (req, res) => {
 exports.listarPdfsPorMaterial = async (req, res) => {
   try {
     const { codigo } = req.params;
-    const dir = path.join(UPLOADS_BASE, String(codigo));
-    try {
-      await ensureDir(dir);
-      const files = await fs.readdir(dir);
-      const items = [];
-      const pdfFiles = files.filter(f => !f.endsWith('.meta.json') && !f.startsWith('.'));
-      for (const f of pdfFiles) {
-        const full = path.join(dir, f);
-        const stat = await fs.stat(full);
-        const original = f.replace(/^\d+_/, '');
-        let categoria = null;
-        try {
-          const metaPath = path.join(dir, f + '.meta.json');
-          const metaRaw = await fs.readFile(metaPath, 'utf8').catch(() => null);
-          if (metaRaw) {
-            const meta = JSON.parse(metaRaw);
-            categoria = meta.categoria || null;
-          }
-        } catch (e) {
-          categoria = null;
-        }
-        items.push({ 
-          id: f, 
-          nombre_archivo: original, 
-          url: `/api/volumetricos/pdfs/download/${encodeURIComponent(f)}`, 
-          categoria: categoria, 
-          size_bytes: stat.size, 
-          mime: 'application/pdf', 
-          fecha_subida: stat.mtime 
-        });
-      }
-      items.sort((a, b) => new Date(a.fecha_subida) - new Date(b.fecha_subida));
-      res.json(items);
-    } catch (e) {
-      return res.json([]);
-    }
+    const [rows] = await pool.execute(
+      'SELECT id, material_id, categoria, nombre_archivo, fecha_subida FROM pdfs_material WHERE material_id = ? ORDER BY fecha_subida ASC',
+      [codigo]
+    );
+    const items = rows.map(r => ({
+      id: r.id,
+      nombre_archivo: r.nombre_archivo,
+      categoria: r.categoria,
+      fecha_subida: r.fecha_subida
+    }));
+    res.json(items);
   } catch (error) {
     console.error('Error listar PDFs:', error);
     res.status(500).json({ message: 'Error listando PDFs', error: error.message });
@@ -432,36 +407,14 @@ exports.subirPdfMaterial = async (req, res) => {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: 'No se recibió archivo' });
     }
-    const dir = path.join(UPLOADS_BASE, String(codigo));
-    await ensureDir(dir);
     const originalName = req.file.originalname || 'archivo.pdf';
-    const filename = `${Date.now()}_${originalName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-    const full = path.join(dir, filename);
-    await fs.writeFile(full, req.file.buffer);
-    const meta = {
-      originalName: originalName,
-      categoria: categoria || null,
-      mime: req.file.mimetype || 'application/pdf',
-      size_bytes: req.file.size || (req.file.buffer ? req.file.buffer.length : null),
-      fecha_subida: new Date().toISOString()
-    };
-    const metaPath = path.join(dir, filename + '.meta.json');
-    try { 
-      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8'); 
-    } catch (e) { 
-      console.warn('No se pudo escribir meta', e); 
-    }
-    const stat = await fs.stat(full);
-    const item = { 
-      id: filename, 
-      nombre_archivo: originalName, 
-      categoria: categoria || null, 
-      size_bytes: stat.size, 
-      mime: req.file.mimetype || 'application/pdf', 
-      url: `/api/volumetricos/pdfs/download/${encodeURIComponent(filename)}`, 
-      fecha_subida: stat.mtime 
-    };
-    res.status(201).json(item);
+    const buffer = req.file.buffer;
+    const [result] = await pool.execute(
+      'INSERT INTO pdfs_material (material_id, categoria, nombre_archivo, archivo, fecha_subida) VALUES (?, ?, ?, ?, NOW())',
+      [codigo, categoria, originalName, buffer]
+    );
+    const insertedId = result.insertId;
+    res.status(201).json({ id: insertedId, nombre_archivo: originalName, categoria });
   } catch (error) {
     console.error('Error subir PDF:', error);
     res.status(500).json({ message: 'Error subiendo PDF', error: error.message });
@@ -472,30 +425,15 @@ exports.subirPdfMaterial = async (req, res) => {
 exports.descargarPdf = async (req, res) => {
   try {
     const { id } = req.params;
-    const base = UPLOADS_BASE;
-    let found = null;
-    try {
-      const dirs = await fs.readdir(base);
-      for (const d of dirs) {
-        const candidate = path.join(base, d, id);
-        try {
-          const stat = await fs.stat(candidate);
-          if (stat && stat.isFile()) { 
-            found = candidate; 
-            break; 
-          }
-        } catch (_) { }
-      }
-    } catch (e) { }
-    if (!found) return res.status(404).json({ message: 'Archivo no encontrado' });
+    const [rows] = await pool.execute(
+      'SELECT nombre_archivo, archivo FROM pdfs_material WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Archivo no encontrado' });
+    const r = rows[0];
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', (await fs.stat(found)).size);
-    const stream = require('fs').createReadStream(found);
-    stream.on('error', (err) => {
-      console.error('Error reading file', err);
-      res.status(500).end();
-    });
-    stream.pipe(res);
+    res.setHeader('Content-Disposition', `inline; filename="${r.nombre_archivo || 'archivo.pdf'}"`);
+    res.send(r.archivo);
   } catch (error) {
     console.error('Error descargar PDF:', error);
     res.status(500).json({ message: 'Error descargando PDF', error: error.message });
@@ -506,27 +444,10 @@ exports.descargarPdf = async (req, res) => {
 exports.eliminarPdf = async (req, res) => {
   try {
     const { id } = req.params;
-    const base = UPLOADS_BASE;
-    let found = null;
-    try {
-      const dirs = await fs.readdir(base);
-      for (const d of dirs) {
-        const candidate = path.join(base, d, id);
-        try {
-          const stat = await fs.stat(candidate);
-          if (stat && stat.isFile()) { 
-            found = candidate; 
-            break; 
-          }
-        } catch (_) { }
-      }
-    } catch (e) { }
-    if (!found) return res.status(404).json({ message: 'Archivo no encontrado' });
-    await fs.unlink(found);
-    // También eliminar metadata si existe
-    try {
-      await fs.unlink(found + '.meta.json');
-    } catch (_) { }
+    const [result] = await pool.execute('DELETE FROM pdfs_material WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Archivo no encontrado' });
+    }
     res.json({ message: 'Archivo eliminado' });
   } catch (error) {
     console.error('Error eliminar PDF:', error);
