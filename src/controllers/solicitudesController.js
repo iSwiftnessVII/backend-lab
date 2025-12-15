@@ -1,4 +1,27 @@
 const pool = require('../config/db');
+let nodemailer = null;
+try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
+
+async function sendMail(to, subject, text, html) {
+  if (!nodemailer) {
+    console.log(`[email] nodemailer no disponible; simulando envío: to=${to} subject="${subject}"`);
+    return { simulated: true };
+  }
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || 'false') === 'true';
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || `no-reply@backend-lab`;
+  if (!host || !user || !pass) {
+    console.warn('[email] SMTP env incompletos; simulando envío');
+    console.log(`[email] to=${to} text=${text}`);
+    return { simulated: true };
+  }
+  const transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  const info = await transport.sendMail({ from, to, subject, text, html });
+  return { messageId: info.messageId };
+}
 
 const solicitudesController = {
   // ---------- DEPARTAMENTOS Y CIUDADES ----------
@@ -499,11 +522,118 @@ const solicitudesController = {
           ]
         );
       }
-      
+
+      // Enviar correo al suscriptor de revisión si está suscrito
+      try {
+        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const toEmail = (req.user && req.user.email) ? String(req.user.email).trim().toLowerCase() : '';
+        if (toEmail && re.test(toEmail)) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+              email VARCHAR(255) PRIMARY KEY,
+              activo TINYINT(1) NOT NULL DEFAULT 1,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+          const [subs] = await pool.query('SELECT activo FROM suscripciones_revision_oferta WHERE email = ?', [toEmail]);
+          const suscrito = !!(subs && subs[0] && subs[0].activo);
+          if (suscrito) {
+            // Obtener datos de la solicitud para contexto
+            const [rows] = await pool.query(
+              `SELECT 
+                 s.solicitud_id, s.tipo_solicitud, s.nombre_muestra, s.fecha_solicitud, s.lote_producto,
+                 u.nombre_solicitante, u.correo_electronico
+               FROM Solicitudes s
+               LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+               WHERE s.solicitud_id = ?
+               LIMIT 1`,
+              [id_solicitud]
+            );
+            const s = rows && rows[0] ? rows[0] : {};
+            const viable = b.servicio_es_viable ? 'viable' : 'no viable';
+            const subject = `Revisión de la oferta: Servicio ${viable}`;
+            const text =
+              `Se ha guardado la revisión de la oferta.\n\n` +
+              `Solicitud: ${s.solicitud_id || id_solicitud}\n` +
+              `Solicitante: ${s.nombre_solicitante || 'N/A'}\n` +
+              `Muestra: ${s.nombre_muestra || 'N/A'}\n` +
+              `Tipo: ${s.tipo_solicitud || 'N/A'}\n\n` +
+              `Fecha límite de entrega: ${b.fecha_limite_entrega || 'N/A'}\n` +
+              `Fecha de envío de resultados: ${b.fecha_envio_resultados || 'N/A'}\n` +
+              `Servicio es viable: ${b.servicio_es_viable ? 'Sí' : 'No'}`;
+            const html =
+              `<h3>Revisión de la oferta</h3>` +
+              `<p><strong>Solicitud:</strong> ${s.solicitud_id || id_solicitud}</p>` +
+              `<p><strong>Solicitante:</strong> ${s.nombre_solicitante || 'N/A'}</p>` +
+              `<p><strong>Muestra:</strong> ${s.nombre_muestra || 'N/A'}</p>` +
+              `<p><strong>Tipo:</strong> ${s.tipo_solicitud || 'N/A'}</p>` +
+              `<hr/>` +
+              `<p><strong>Fecha límite de entrega:</strong> ${b.fecha_limite_entrega || 'N/A'}</p>` +
+              `<p><strong>Fecha de envío de resultados:</strong> ${b.fecha_envio_resultados || 'N/A'}</p>` +
+              `<p><strong>Servicio es viable:</strong> ${b.servicio_es_viable ? 'Sí' : 'No'}</p>`;
+            await sendMail(toEmail, subject, text, html);
+          }
+        }
+      } catch (mailErr) {
+        console.warn('Aviso: error al enviar correo de revisión', mailErr);
+      }
+
       res.json({ ok: true });
     } catch (err) {
       console.error('createOrUpdateRevision error', err);
       res.status(500).json({ message: 'Internal server error' });
+    }
+  },
+  
+  suscribirseRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(
+        `INSERT INTO suscripciones_revision_oferta (email, activo) VALUES (?, 1)
+         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
+        [email]
+      );
+      const text = `Te has suscrito a notificaciones de revisión de oferta.\n\nRecibirás correos cuando se registre una revisión.`;
+      const html = `<p>Te has suscrito a notificaciones de <strong>revisión de oferta</strong>.</p><p>Recibirás correos cuando se registre una revisión.</p>`;
+      await sendMail(email, 'Suscripción a revisión de oferta confirmada', text, html);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Error suscribirseRevisionOferta:', err);
+      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
+    }
+  },
+  
+  obtenerEstadoSuscripcionRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const [rows] = await pool.query('SELECT activo FROM suscripciones_revision_oferta WHERE email = ?', [email]);
+      if (!rows.length) return res.json({ suscrito: false });
+      return res.json({ suscrito: !!rows[0].activo });
+    } catch (err) {
+      console.error('Error obtenerEstadoSuscripcionRevisionOferta:', err);
+      return res.status(500).json({ error: 'Error consultando suscripción' });
     }
   },
 

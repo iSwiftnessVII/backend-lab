@@ -14,6 +14,8 @@ router.post('/historial', equiposController.crearHistorial);
 
 // POST /api/equipos/ficha-tecnica - Registrar ficha técnica (con imagen de firma)
 router.post('/ficha-tecnica', uploadImage.single('firma'), equiposController.crearFichaTecnica);
+router.put('/ficha-tecnica/:codigo', uploadImage.single('firma'), equiposController.actualizarFichaTecnica);
+router.patch('/ficha-tecnica/:codigo', uploadImage.single('firma'), equiposController.actualizarFichaTecnica);
 
 // GET /api/equipos - Listar equipos registrados
 router.get('/', equiposController.listarEquipos);
@@ -39,6 +41,8 @@ router.get('/intervalo/list/:codigo', equiposController.listarIntervaloPorEquipo
 router.put('/historial/:equipo/:consecutivo', equiposController.actualizarHistorial);
 // PUT /api/equipos/intervalo/:equipo/:consecutivo - Actualizar registro de intervalo por equipo+consecutivo
 router.put('/intervalo/:equipo/:consecutivo', equiposController.actualizarIntervalo);
+router.put('/:codigo', equiposController.actualizarEquipo);
+router.patch('/:codigo', equiposController.actualizarEquipo);
 
 // DELETE /api/equipos/:codigo - Eliminar equipo (y dependencias)
 router.delete('/:codigo', equiposController.eliminarEquipo);

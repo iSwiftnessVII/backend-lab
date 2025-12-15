@@ -204,6 +204,7 @@ exports.listarEquipos = async (req, res) => {
         ft.idioma_manual,
         ft.magnitud,
         ft.resolucion,
+        ft.accesorios AS accesorios_ficha,
         ft.precision_med,
         ft.rango_de_medicion,
         ft.rango_de_uso,
@@ -236,6 +237,159 @@ exports.listarEquipos = async (req, res) => {
   } catch (error) {
     console.error('Error al listar equipos:', error);
     res.status(500).json({ message: 'Error al listar equipos', error: error.message });
+  }
+};
+
+exports.actualizarEquipo = async (req, res) => {
+  try {
+    const { codigo } = req.params;
+    const body = req.body || {};
+    const allowed = [
+      'nombre',
+      'modelo',
+      'marca',
+      'inventario_sena',
+      'ubicacion',
+      'acreditacion',
+      'tipo_manual',
+      'numero_serie',
+      'tipo',
+      'clasificacion',
+      'manual_usuario',
+      'puesta_en_servicio',
+      'fecha_adquisicion',
+      'requerimientos_equipo',
+      'elementos_electricos',
+      'voltaje',
+      'elementos_mecanicos',
+      'frecuencia',
+      'campo_medicion',
+      'exactitud',
+      'sujeto_verificar',
+      'sujeto_calibracion',
+      'resolucion_division',
+      'sujeto_calificacion',
+      'accesorios'
+    ];
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const fields = [];
+      const values = [];
+      for (const key of Object.keys(body)) {
+        if (allowed.includes(key)) {
+          fields.push(`${key} = ?`);
+          values.push(typeof body[key] === 'undefined' ? null : body[key]);
+        }
+      }
+      if (!fields.length) {
+        await conn.rollback();
+        return res.status(400).json({ message: 'No hay campos para actualizar' });
+      }
+      values.push(codigo);
+      const sql = `UPDATE hv_equipos SET ${fields.join(', ')} WHERE codigo_identificacion = ?`;
+      const [result] = await conn.execute(sql, values);
+      if (result.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ message: 'Equipo no encontrado' });
+      }
+      const [ftExists] = await conn.execute(
+        'SELECT 1 FROM ficha_tecnica_de_equipos WHERE codigo_identificador = ? LIMIT 1',
+        [codigo]
+      );
+      const ENABLE_SYNC = false;
+      const ftFields = [];
+      const ftValues = [];
+      const syncKeys = ['nombre', 'marca', 'modelo', 'voltaje', 'frecuencia', 'accesorios', 'exactitud'];
+      function sanitizeGeneral(val) {
+        if (typeof val === 'undefined' || val === null) return null;
+        if (typeof val === 'string' && val.trim() === '') return null;
+        return val;
+      }
+      function sanitizeNumber(val) {
+        if (typeof val === 'undefined' || val === null) return null;
+        if (typeof val === 'number') return val;
+        if (typeof val === 'string') {
+          const trimmed = val.trim();
+          if (trimmed === '') return null;
+          // Extract first numeric pattern (supports decimals)
+          const m = trimmed.match(/-?\d+(?:\.\d+)?/);
+          if (m) {
+            const n = parseFloat(m[0]);
+            return isNaN(n) ? null : n;
+          }
+          return null;
+        }
+        return null;
+      }
+      function sanitizeDate(val) {
+        if (typeof val === 'undefined' || val === null) return null;
+        if (typeof val === 'string' && val.trim() === '') return null;
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+        try {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+          }
+        } catch (_) { }
+        return null;
+      }
+      for (const key of syncKeys) {
+        if (Object.prototype.hasOwnProperty.call(body, key)) {
+          ftFields.push(`${key} = ?`);
+          if (key === 'voltaje' || key === 'frecuencia') {
+            ftValues.push(sanitizeNumber(body[key]));
+          } else {
+            ftValues.push(sanitizeGeneral(body[key]));
+          }
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'numero_serie')) {
+        ftFields.push('serie = ?');
+        ftValues.push(sanitizeGeneral(body['numero_serie']));
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'manual_usuario')) {
+        ftFields.push('manual_ope = ?');
+        ftValues.push(sanitizeGeneral(body['manual_usuario']));
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'fecha_adquisicion')) {
+        ftFields.push('fecha_adq = ?');
+        ftValues.push(sanitizeDate(body['fecha_adquisicion']));
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'puesta_en_servicio')) {
+        ftFields.push('fecha_func = ?');
+        ftValues.push(sanitizeDate(body['puesta_en_servicio']));
+      }
+      if (ENABLE_SYNC && ftFields.length) {
+        if (ftExists.length > 0) {
+          ftValues.push(codigo);
+          const ftSql = `UPDATE ficha_tecnica_de_equipos SET ${ftFields.join(', ')} WHERE codigo_identificador = ?`;
+          await conn.execute(ftSql, ftValues);
+        } else {
+          const cols = ['codigo_identificador', ...ftFields.map(f => f.split(' = ')[0])];
+          const placeholders = new Array(cols.length).fill('?').join(', ');
+          const insertSql = `INSERT INTO ficha_tecnica_de_equipos (${cols.join(', ')}) VALUES (${placeholders})`;
+          await conn.execute(insertSql, [codigo, ...ftValues]);
+        }
+      }
+      await conn.commit();
+      const [rows] = await conn.execute(
+        `SELECT codigo_identificacion, nombre, modelo, marca, inventario_sena, ubicacion, acreditacion, tipo_manual, numero_serie, tipo, clasificacion, manual_usuario, puesta_en_servicio, fecha_adquisicion, requerimientos_equipo, elementos_electricos, voltaje, elementos_mecanicos, frecuencia, campo_medicion, exactitud, sujeto_verificar, sujeto_calibracion, resolucion_division, sujeto_calificacion, accesorios FROM hv_equipos WHERE codigo_identificacion = ?`,
+        [codigo]
+      );
+      res.json(rows[0]);
+    } catch (e) {
+      try { await conn.rollback(); } catch (_) {}
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } catch (error) {
+    console.error('Error actualizando equipo:', error);
+    res.status(500).json({ message: 'Error al actualizar equipo', error: error.message });
   }
 };
 
@@ -432,39 +586,193 @@ exports.crearFichaTecnica = async (req, res) => {
     // Recibe la imagen de la firma como archivo (multer)
     const cargo_y_firma = req.file ? req.file.buffer : null;
 
-    // Convierte undefined a null en todos los parámetros
-    function sanitize(val) {
-      return typeof val === 'undefined' ? null : val;
+    const [existsRows] = await pool.execute(
+      'SELECT 1 FROM ficha_tecnica_de_equipos WHERE codigo_identificador = ? LIMIT 1',
+      [codigo_identificador]
+    );
+
+    if (existsRows.length > 0) {
+      const fields = [];
+      const values = [];
+      const map = [
+        ['nombre', nombre],
+        ['marca', marca],
+        ['modelo', modelo],
+        ['serie', serie],
+        ['fabricante', fabricante],
+        ['fecha_adq', fecha_adq],
+        ['uso', uso],
+        ['fecha_func', fecha_func],
+        ['precio', precio],
+        ['accesorios', accesorios],
+        ['manual_ope', manual_ope],
+        ['idioma_manual', idioma_manual],
+        ['magnitud', magnitud],
+        ['resolucion', resolucion],
+        ['precision_med', precision_med],
+        ['exactitud', exactitud],
+        ['rango_de_medicion', rango_de_medicion],
+        ['rango_de_uso', rango_de_uso],
+        ['voltaje', voltaje],
+        ['potencia', potencia],
+        ['amperaje', amperaje],
+        ['frecuencia', frecuencia],
+        ['ancho', ancho],
+        ['alto', alto],
+        ['peso_kg', peso_kg],
+        ['profundidad', profundidad],
+        ['temperatura_c', temperatura_c],
+        ['humedad_porcentaje', humedad_porcentaje],
+        ['limitaciones_e_interferencias', limitaciones_e_interferencias],
+        ['otros', otros],
+        ['especificaciones_software', especificaciones_software],
+        ['proveedor', proveedor],
+        ['email', email],
+        ['telefono', telefono],
+        ['fecha_de_instalacion', fecha_de_instalacion],
+        ['alcance_del_servicio', alcance_del_servicio],
+        ['garantia', garantia],
+        ['observaciones', observaciones],
+        ['recibido_por', recibido_por],
+        ['fecha', fecha]
+      ];
+      function sanitizeGeneral(val) {
+        if (typeof val === 'undefined' || val === null) return null;
+        if (typeof val === 'string' && val.trim() === '') return null;
+        return val;
+      }
+      function sanitizeDate(val) {
+        if (typeof val === 'undefined' || val === null) return null;
+        if (typeof val === 'string' && val.trim() === '') return null;
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+        try {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+          }
+        } catch (_) { }
+        return null;
+      }
+      for (const [col, val] of map) {
+        if (typeof val === 'undefined') continue;
+        fields.push(`${col} = ?`);
+        if (col === 'fecha_adq' || col === 'fecha_func') {
+          values.push(sanitizeDate(val));
+        } else {
+          values.push(sanitizeGeneral(val));
+        }
+      }
+      if (cargo_y_firma) {
+        fields.push('cargo_y_firma = ?');
+        values.push(cargo_y_firma);
+      }
+      if (!fields.length) {
+        return res.status(400).json({ message: 'No hay campos para actualizar' });
+      }
+      values.push(codigo_identificador);
+      const sql = `UPDATE ficha_tecnica_de_equipos SET ${fields.join(', ')} WHERE codigo_identificador = ?`;
+      await pool.execute(sql, values);
+      res.status(200).json({ message: 'Ficha técnica actualizada correctamente' });
+    } else {
+      function sanitize(val) {
+        return typeof val === 'undefined' ? null : val;
+      }
+      const params = [
+        codigo_identificador, nombre, marca, modelo, serie, fabricante, fecha_adq, uso,
+        fecha_func, precio, accesorios, manual_ope, idioma_manual, magnitud, resolucion,
+        precision_med, exactitud, rango_de_medicion, rango_de_uso, voltaje, potencia,
+        amperaje, frecuencia, ancho, alto, peso_kg, profundidad, temperatura_c,
+        humedad_porcentaje, limitaciones_e_interferencias, otros, especificaciones_software,
+        proveedor, email, telefono, fecha_de_instalacion, alcance_del_servicio, garantia,
+        observaciones, recibido_por, cargo_y_firma, fecha
+      ].map(sanitize);
+      const sql = `INSERT INTO ficha_tecnica_de_equipos (
+        codigo_identificador, nombre, marca, modelo, serie, fabricante, fecha_adq, uso, 
+        fecha_func, precio, accesorios, manual_ope, idioma_manual, magnitud, resolucion, 
+        precision_med, exactitud, rango_de_medicion, rango_de_uso, voltaje, potencia, 
+        amperaje, frecuencia, ancho, alto, peso_kg, profundidad, temperatura_c, 
+        humedad_porcentaje, limitaciones_e_interferencias, otros, especificaciones_software, 
+        proveedor, email, telefono, fecha_de_instalacion, alcance_del_servicio, garantia, 
+        observaciones, recibido_por, cargo_y_firma, fecha
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      await pool.execute(sql, params);
+      res.status(201).json({ message: 'Ficha técnica registrada correctamente' });
     }
-
-    const params = [
-      codigo_identificador, nombre, marca, modelo, serie, fabricante, fecha_adq, uso,
-      fecha_func, precio, accesorios, manual_ope, idioma_manual, magnitud, resolucion,
-      precision_med, exactitud, rango_de_medicion, rango_de_uso, voltaje, potencia,
-      amperaje, frecuencia, ancho, alto, peso_kg, profundidad, temperatura_c,
-      humedad_porcentaje, limitaciones_e_interferencias, otros, especificaciones_software,
-      proveedor, email, telefono, fecha_de_instalacion, alcance_del_servicio, garantia,
-      observaciones, recibido_por, cargo_y_firma, fecha
-    ].map(sanitize);
-
-    const sql = `INSERT INTO ficha_tecnica_de_equipos (
-      codigo_identificador, nombre, marca, modelo, serie, fabricante, fecha_adq, uso, 
-      fecha_func, precio, accesorios, manual_ope, idioma_manual, magnitud, resolucion, 
-      precision_med, exactitud, rango_de_medicion, rango_de_uso, voltaje, potencia, 
-      amperaje, frecuencia, ancho, alto, peso_kg, profundidad, temperatura_c, 
-      humedad_porcentaje, limitaciones_e_interferencias, otros, especificaciones_software, 
-      proveedor, email, telefono, fecha_de_instalacion, alcance_del_servicio, garantia, 
-      observaciones, recibido_por, cargo_y_firma, fecha
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-    await pool.execute(sql, [
-      ...params
-    ]);
-
-    res.status(201).json({ message: 'Ficha técnica registrada correctamente' });
   } catch (error) {
     console.error('Error al registrar ficha técnica:', error);
     res.status(500).json({ message: 'Error al registrar ficha técnica', error: error.message });
+  }
+};
+
+exports.actualizarFichaTecnica = async (req, res) => {
+  try {
+    const { codigo } = req.params;
+    const [existsRows] = await pool.execute(
+      'SELECT 1 FROM ficha_tecnica_de_equipos WHERE codigo_identificador = ? LIMIT 1',
+      [codigo]
+    );
+    if (existsRows.length === 0) {
+      return res.status(404).json({ message: 'Ficha técnica no encontrada' });
+    }
+    const cargo_y_firma = req.file ? req.file.buffer : null;
+    const body = req.body || {};
+    const columns = [
+      'nombre', 'marca', 'modelo', 'serie', 'fabricante', 'fecha_adq', 'uso', 'fecha_func', 'precio',
+      'accesorios', 'manual_ope', 'idioma_manual', 'magnitud', 'resolucion', 'precision_med', 'exactitud',
+      'rango_de_medicion', 'rango_de_uso', 'voltaje', 'potencia', 'amperaje', 'frecuencia', 'ancho', 'alto',
+      'peso_kg', 'profundidad', 'temperatura_c', 'humedad_porcentaje', 'limitaciones_e_interferencias', 'otros',
+      'especificaciones_software', 'proveedor', 'email', 'telefono', 'fecha_de_instalacion', 'alcance_del_servicio',
+      'garantia', 'observaciones', 'recibido_por', 'fecha'
+    ];
+    function sanitizeGeneral(val) {
+      if (typeof val === 'undefined' || val === null) return null;
+      if (typeof val === 'string' && val.trim() === '') return null;
+      return val;
+    }
+    function sanitizeDate(val) {
+      if (typeof val === 'undefined' || val === null) return null;
+      if (typeof val === 'string' && val.trim() === '') return null;
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+      try {
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) {
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+      } catch (_) {}
+      return null;
+    }
+    const fields = [];
+    const values = [];
+    for (const col of columns) {
+      if (Object.prototype.hasOwnProperty.call(body, col)) {
+        fields.push(`${col} = ?`);
+        if (col === 'fecha_adq' || col === 'fecha_func' || col === 'fecha' || col === 'fecha_de_instalacion') {
+          values.push(sanitizeDate(body[col]));
+        } else {
+          values.push(sanitizeGeneral(body[col]));
+        }
+      }
+    }
+    if (cargo_y_firma) {
+      fields.push('cargo_y_firma = ?');
+      values.push(cargo_y_firma);
+    }
+    if (!fields.length) {
+      return res.status(400).json({ message: 'No hay campos para actualizar' });
+    }
+    values.push(codigo);
+    const sql = `UPDATE ficha_tecnica_de_equipos SET ${fields.join(', ')} WHERE codigo_identificador = ?`;
+    await pool.execute(sql, values);
+    res.status(200).json({ message: 'Ficha técnica actualizada correctamente' });
+  } catch (error) {
+    console.error('Error al actualizar ficha técnica:', error);
+    res.status(500).json({ message: 'Error al actualizar ficha técnica', error: error.message });
   }
 };
 

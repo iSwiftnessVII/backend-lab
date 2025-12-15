@@ -3,12 +3,6 @@ const router = express.Router();
 const usuariosController = require('../controllers/usuariosController');
 const { verifyToken } = require('../middleware/jwt');
 
-/* POST /api/usuarios/verificacion/enviar-codigo - Enviar código al email */
-router.post('/verificacion/enviar-codigo', usuariosController.enviarCodigoVerificacion);
-
-/* POST /api/usuarios/verificacion/verificar-codigo - Validar código ingresado */
-router.post('/verificacion/verificar-codigo', usuariosController.verificarCodigoVerificacion);
-
 /* GET /api/usuarios/roles - Listar todos los roles */
 router.get('/roles', usuariosController.getRoles);
 
