@@ -39,6 +39,7 @@ router.put('/revision/:id_solicitud', verifyToken, solicitudesController.createO
 // Suscripciones para revisión de oferta
 router.post('/suscripciones-revision', solicitudesController.suscribirseRevisionOferta);
 router.get('/suscripciones-revision/:email', solicitudesController.obtenerEstadoSuscripcionRevisionOferta);
+router.delete('/suscripciones-revision/:email', solicitudesController.cancelarSuscripcionRevisionOferta);
 
 // ---------- SEGUIMIENTO ENCUESTA ----------
 router.post('/seguimiento-encuesta', verifyToken, solicitudesController.createOrUpdateSeguimientoEncuesta);

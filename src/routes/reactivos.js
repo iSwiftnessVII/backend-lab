@@ -77,8 +77,13 @@ router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCer
 router.post('/suscripciones', reactivosController.suscribirseReactivos);
 // Obtener estado de suscripción por email
 router.get('/suscripciones/:email', reactivosController.obtenerEstadoSuscripcion);
+// Cancelar suscripción por email
+router.delete('/suscripciones/:email', reactivosController.cancelarSuscripcion);
 // Enviar notificación de prueba
 router.post('/notificaciones/test', reactivosController.enviarNotificacionPrueba);
+
+// Listar alertas próximas (6, 3, 2, 1 meses)
+router.get('/alertas-proximas', reactivosController.listarAlertasProximas);
 
 // ========== REACTIVOS (CRUD) ==========
 

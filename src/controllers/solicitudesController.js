@@ -636,6 +636,28 @@ const solicitudesController = {
       return res.status(500).json({ error: 'Error consultando suscripción' });
     }
   },
+  
+  cancelarSuscripcionRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const [result] = await pool.query('UPDATE suscripciones_revision_oferta SET activo = 0 WHERE email = ?', [email]);
+      return res.json({ ok: true, updated: result.affectedRows });
+    } catch (err) {
+      console.error('Error cancelarSuscripcionRevisionOferta:', err);
+      return res.status(500).json({ error: 'Error cancelando suscripción de revisión' });
+    }
+  },
 
   // ---------- SEGUIMIENTO ENCUESTA ----------
   createOrUpdateSeguimientoEncuesta: async (req, res) => {

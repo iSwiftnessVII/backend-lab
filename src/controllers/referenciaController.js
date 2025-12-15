@@ -50,6 +50,75 @@ const eliminarMaterial = async (req, res) => {
   }
 };
 
+const listarPdfsPorReferencia = async (req, res) => {
+  try {
+    const { codigo } = req.params;
+    const [rows] = await pool.query(
+      'SELECT id, referencia_id, categoria, nombre_archivo, fecha_subida FROM pdfs_referencia WHERE referencia_id = ? ORDER BY fecha_subida ASC',
+      [codigo]
+    );
+    const items = rows.map(r => ({
+      id: r.id,
+      nombre_archivo: r.nombre_archivo,
+      categoria: r.categoria,
+      fecha_subida: r.fecha_subida
+    }));
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const subirPdfReferencia = async (req, res) => {
+  try {
+    const codigo = req.params.codigo || req.body.codigo_material;
+    const categoria = req.body.categoria || null;
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'No se recibió archivo' });
+    }
+    const originalName = req.file.originalname || 'archivo.pdf';
+    const buffer = req.file.buffer;
+    const [result] = await pool.query(
+      'INSERT INTO pdfs_referencia (referencia_id, categoria, nombre_archivo, archivo, fecha_subida) VALUES (?, ?, ?, ?, NOW())',
+      [codigo, categoria, originalName, buffer]
+    );
+    const insertedId = result.insertId;
+    res.status(201).json({ id: insertedId, nombre_archivo: originalName, categoria });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const descargarPdfReferencia = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query(
+      'SELECT nombre_archivo, archivo FROM pdfs_referencia WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Archivo no encontrado' });
+    const r = rows[0];
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${r.nombre_archivo || 'archivo.pdf'}"`);
+    res.send(r.archivo);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const eliminarPdfReferencia = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await pool.query('DELETE FROM pdfs_referencia WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Archivo no encontrado' });
+    }
+    res.json({ message: 'Archivo eliminado' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Historial Referencia
 const listarHistorialPorMaterial = async (req, res) => {
   const { codigo_material } = req.params;
@@ -213,4 +282,9 @@ module.exports = {
   crearIntervalo,
   actualizarIntervalo,
   obtenerNextIntervalo
+  ,
+  listarPdfsPorReferencia,
+  subirPdfReferencia,
+  descargarPdfReferencia,
+  eliminarPdfReferencia
 };

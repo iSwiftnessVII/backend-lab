@@ -839,6 +839,37 @@ async function ensureSuscripcionesTable() {
   }
 }
 
+// Crear tabla de notificaciones si no existe (evitar correos duplicados por reinicios)
+async function ensureNotificacionesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notificaciones_reactivos (
+        lote VARCHAR(255) NOT NULL,
+        days_threshold INT NOT NULL,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (lote, days_threshold)
+      )
+    `);
+  } catch (err) {
+    console.error('Error creando tabla notificaciones_reactivos:', err);
+  }
+}
+
+async function ensureJobRunsTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_runs (
+        job_name VARCHAR(64) NOT NULL,
+        run_date DATE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (job_name, run_date)
+      )
+    `);
+  } catch (err) {
+    console.error('Error creando tabla job_runs:', err);
+  }
+}
+
 // Helper para enviar correo
 async function sendMail(to, subject, text, html) {
   if (!nodemailer) {
@@ -903,10 +934,43 @@ reactivosController.obtenerEstadoSuscripcion = async (req, res) => {
   }
 };
 
+reactivosController.cancelarSuscripcion = async (req, res) => {
+  try {
+    const email = String((req.params || {}).email || '').trim().toLowerCase();
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !re.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+    await ensureSuscripcionesTable();
+    const [result] = await pool.query('UPDATE suscripciones_reactivos SET activo = 0 WHERE email = ?', [email]);
+    return res.json({ ok: true, updated: result.affectedRows });
+  } catch (err) {
+    console.error('Error cancelarSuscripcion:', err);
+    return res.status(500).json({ error: 'Error cancelando suscripción' });
+  }
+};
+
 // Job: enviar notificaciones de vencimiento (ejecutar diariamente)
 reactivosController.ejecutarNotificacionesVencimiento = async () => {
   try {
     await ensureSuscripcionesTable();
+    await ensureNotificacionesTable();
+    await ensureJobRunsTable();
+
+    const jobName = 'reactivos_vencimiento';
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    try {
+      const [alreadyRan] = await pool.query(
+        'SELECT 1 FROM job_runs WHERE job_name = ? AND run_date = ? LIMIT 1',
+        [jobName, today]
+      );
+      if (alreadyRan && alreadyRan.length) {
+        return;
+      }
+    } catch (errCheck) {
+      console.error('Error verificando ejecución diaria job_runs:', errCheck);
+    }
+
     const [subs] = await pool.query('SELECT email FROM suscripciones_reactivos WHERE activo = 1');
     const emails = subs.map(s => s.email).filter(Boolean);
     if (!emails.length) return;
@@ -920,9 +984,11 @@ reactivosController.ejecutarNotificacionesVencimiento = async () => {
       { label: '2 meses', days: 60 },
       { label: '1 mes', days: 30 },
     ];
+    const vencido = { label: 'Vencido', days: 0 };
 
     const grupos = {};
     for (const t of thresholds) grupos[t.days] = [];
+    grupos[vencido.days] = [];
 
     for (const r of rows || []) {
       const d = new Date(r.fecha_vencimiento);
@@ -940,14 +1006,44 @@ reactivosController.ejecutarNotificacionesVencimiento = async () => {
           break;
         }
       }
+      // Capturar vencidos una sola vez (ventana -1..+1 alrededor de 0 días)
+      if (days >= vencido.days - 1 && days <= vencido.days + 1) {
+        grupos[vencido.days].push({
+          nombre: r.nombre,
+          lote: r.lote,
+          codigo: r.codigo,
+          fecha: d.toISOString().slice(0, 10)
+        });
+      }
     }
 
-    // Construir contenido si hay items
-    const hayItems = thresholds.some(t => grupos[t.days].length);
+    // Filtrar elementos ya notificados previamente para evitar duplicados al reiniciar
+    const relevantDays = [...thresholds.map(t => t.days), vencido.days];
+    const [prev] = await pool.query(
+      `SELECT lote, days_threshold FROM notificaciones_reactivos WHERE days_threshold IN (${relevantDays.join(',')})`
+    );
+    const prevSet = new Set((prev || []).map(p => `${p.lote}:${p.days_threshold}`));
+    for (const t of thresholds) {
+      grupos[t.days] = grupos[t.days].filter(it => !prevSet.has(`${it.lote}:${t.days}`));
+    }
+    grupos[vencido.days] = grupos[vencido.days].filter(it => !prevSet.has(`${it.lote}:${vencido.days}`));
+
+    // Construir contenido si hay items (no notificados aún)
+    const hayItems = thresholds.some(t => (grupos[t.days] || []).length) || (grupos[vencido.days] || []).length;
     if (!hayItems) return;
 
     let text = 'Alertas de vencimiento de reactivos:\n\n';
     let html = '<h3>Alertas de vencimiento de reactivos</h3>';
+    if ((grupos[vencido.days] || []).length) {
+      text += `== ${vencido.label} ==\n`;
+      html += `<h4>${vencido.label}</h4><ul>`;
+      for (const it of grupos[vencido.days]) {
+        text += `- ${it.nombre} | Lote: ${it.lote} | Código: ${it.codigo} | Vencido: ${it.fecha}\n`;
+        html += `<li>${it.nombre} — Lote: <strong>${it.lote}</strong> — Código: <strong>${it.codigo}</strong> — Vencido: ${it.fecha}</li>`;
+      }
+      text += '\n';
+      html += '</ul>';
+    }
     for (const t of thresholds) {
       const list = grupos[t.days];
       if (!list.length) continue;
@@ -970,8 +1066,81 @@ reactivosController.ejecutarNotificacionesVencimiento = async () => {
         console.error('Error enviando notificación a', to, e);
       }
     }
+
+    // Registrar notificaciones enviadas para evitar futuras duplicadas en el mismo umbral
+    const inserts = [];
+    for (const t of thresholds) {
+      for (const it of (grupos[t.days] || [])) {
+        inserts.push([it.lote, t.days]);
+      }
+    }
+    for (const it of (grupos[vencido.days] || [])) {
+      inserts.push([it.lote, vencido.days]);
+    }
+    if (inserts.length) {
+      // Inserción en bloque con ON DUPLICATE KEY UPDATE para idempotencia
+      const valuesSql = inserts.map(() => '(?, ?, CURRENT_TIMESTAMP)').join(', ');
+      const flat = inserts.flat();
+      await pool.query(
+        `INSERT INTO notificaciones_reactivos (lote, days_threshold, sent_at) VALUES ${valuesSql}
+         ON DUPLICATE KEY UPDATE sent_at = sent_at`,
+        flat
+      );
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO job_runs (job_name, run_date) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE created_at = created_at`,
+        [jobName, today]
+      );
+    } catch (errRun) {
+      console.error('Error registrando ejecución diaria job_runs:', errRun);
+    }
   } catch (err) {
     console.error('Error ejecutarNotificacionesVencimiento:', err);
+  }
+};
+
+// Endpoint: listar alertas próximas (agrupadas por umbral) sin envío
+reactivosController.listarAlertasProximas = async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE fecha_vencimiento IS NOT NULL');
+    const hoy = new Date();
+    const toMid = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const thresholds = [
+      { label: '6 meses', days: 180 },
+      { label: '3 meses', days: 90 },
+      { label: '2 meses', days: 60 },
+      { label: '1 mes', days: 30 },
+    ];
+    const grupos = {};
+    for (const t of thresholds) grupos[t.days] = [];
+    for (const r of rows || []) {
+      const d = new Date(r.fecha_vencimiento);
+      if (isNaN(d.getTime())) continue;
+      const days = Math.floor((toMid(d) - toMid(hoy)) / 86400000);
+      for (const t of thresholds) {
+        if (days >= t.days - 1 && days <= t.days + 1) {
+          grupos[t.days].push({
+            nombre: r.nombre,
+            lote: r.lote,
+            codigo: r.codigo,
+            fecha: d.toISOString().slice(0, 10)
+          });
+          break;
+        }
+      }
+    }
+    return res.json({
+      '6_meses': grupos[180],
+      '3_meses': grupos[90],
+      '2_meses': grupos[60],
+      '1_mes': grupos[30]
+    });
+  } catch (err) {
+    console.error('Error listarAlertasProximas:', err);
+    return res.status(500).json({ error: 'Error listando alertas próximas' });
   }
 };
 
