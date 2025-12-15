@@ -21,4 +21,7 @@ router.delete('/eliminar/:id', usuariosController.eliminarUsuario);
 /* PATCH /api/usuarios/rol/:id - Cambiar rol de usuario */
 router.patch('/rol/:id', verifyToken, usuariosController.cambiarRol);
 
+/* PATCH /api/usuarios/contrasena/:id - Cambiar contraseña de usuario */
+router.patch('/contrasena/:id', verifyToken, usuariosController.cambiarContrasena);
+
 module.exports = router;

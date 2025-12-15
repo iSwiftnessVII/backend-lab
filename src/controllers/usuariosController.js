@@ -228,6 +228,36 @@ const usuariosController = {
       res.status(500).json({ message: 'Error cambiando rol' });
     }
   },
+  
+  cambiarContrasena: async (req, res) => {
+    const { id } = req.params;
+    const { contrasena } = req.body || {};
+    
+    if (req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ message: 'No tienes permisos para cambiar contraseñas' });
+    }
+    if (!contrasena || typeof contrasena !== 'string' || contrasena.trim().length < 6) {
+      return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+    try {
+      const [userCheck] = await pool.query(
+        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        [id]
+      );
+      if (!userCheck.length) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+      const hashed = await bcrypt.hash(contrasena.trim(), SALT_ROUNDS);
+      await pool.query(
+        'UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?',
+        [hashed, id]
+      );
+      res.json({ message: 'Contraseña actualizada correctamente' });
+    } catch (err) {
+      console.error('Error PATCH /contrasena/:id:', err);
+      res.status(500).json({ message: 'Error actualizando contraseña' });
+    }
+  }
 };
 
 module.exports = usuariosController;
