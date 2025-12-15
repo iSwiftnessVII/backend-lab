@@ -1,9 +1,88 @@
 const pool = require('../config/db');
 const bcrypt = require('bcrypt');
+let nodemailer = null;
+try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 
 const SALT_ROUNDS = 10;
+const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+const codes = new Map(); // email -> { code, expiresAt }
+
+function generateCode() {
+  const digits = Math.random() < 0.5 ? 4 : 5;
+  const max = digits === 4 ? 10000 : 100000;
+  return String(Math.floor(Math.random() * max)).padStart(digits, '0');
+}
+
+async function sendMail(to, subject, text, html) {
+  if (!nodemailer) {
+    console.log(`[email] nodemailer no disponible; simulando envío: to=${to} subject="${subject}" text="${text}"`);
+    return { simulated: true };
+  }
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || 'false') === 'true';
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || `no-reply@backend-lab`;
+  if (!host || !user || !pass) {
+    console.warn('[email] SMTP env incompletos; simulando envío');
+    console.log(`[email] to=${to} text=${text}`);
+    return { simulated: true };
+  }
+  const transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  const info = await transport.sendMail({ from, to, subject, text, html });
+  return { messageId: info.messageId };
+}
 
 const usuariosController = {
+  /* POST /api/usuarios/verificacion/enviar-codigo - Enviar código al email */
+  enviarCodigoVerificacion: async (req, res) => {
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      const code = generateCode();
+      const expiresAt = Date.now() + CODE_TTL_MS;
+      codes.set(email, { code, expiresAt });
+      const text = `Tu código de verificación es: ${code}\nExpira en 10 minutos.`;
+      const html = `<p>Tu código de verificación es: <strong>${code}</strong></p><p>Expira en 10 minutos.</p>`;
+      const r = await sendMail(email, 'Código de verificación', text, html);
+      return res.json({ ok: true, expiresAt, ...r });
+    } catch (err) {
+      console.error('Error enviarCodigoVerificacion:', err);
+      return res.status(500).json({ error: 'No se pudo enviar el código' });
+    }
+  },
+
+  /* POST /api/usuarios/verificacion/verificar-codigo - Validar código ingresado */
+  verificarCodigoVerificacion: async (req, res) => {
+    try {
+      const body = req.body || {};
+      const email = String(body.email || '').trim().toLowerCase();
+      const codigo = String(body.codigo || '').trim();
+      if (!email || !codigo) {
+        return res.status(400).json({ valido: false, error: 'Email y código son requeridos' });
+      }
+      const entry = codes.get(email);
+      if (!entry) {
+        return res.status(400).json({ valido: false, error: 'No hay código enviado para este email' });
+      }
+      if (Date.now() > entry.expiresAt) {
+        codes.delete(email);
+        return res.status(400).json({ valido: false, error: 'Código expirado' });
+      }
+      if (entry.code !== codigo) {
+        return res.status(400).json({ valido: false, error: 'Código incorrecto' });
+      }
+      codes.delete(email);
+      return res.json({ valido: true });
+    } catch (err) {
+      console.error('Error verificarCodigoVerificacion:', err);
+      return res.status(500).json({ valido: false, error: 'Error interno' });
+    }
+  },
   /* GET /api/usuarios/roles - Listar todos los roles */
   getRoles: async (req, res) => {
     try {

@@ -72,6 +72,14 @@ router.post('/:lote/cert-analisis', verifyToken, upload.single('file'), reactivo
 // DELETE por lote - CON AUTENTICACIÓN
 router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCertAnalisisByLote);
 
+// ========== SUSCRIPCIONES Y NOTIFICACIONES ==========
+// Suscribirse a notificaciones de vencimiento de reactivos
+router.post('/suscripciones', reactivosController.suscribirseReactivos);
+// Obtener estado de suscripción por email
+router.get('/suscripciones/:email', reactivosController.obtenerEstadoSuscripcion);
+// Enviar notificación de prueba
+router.post('/notificaciones/test', reactivosController.enviarNotificacionPrueba);
+
 // ========== REACTIVOS (CRUD) ==========
 
 // GET /api/reactivos?q=

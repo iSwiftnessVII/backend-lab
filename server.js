@@ -19,6 +19,7 @@ const reportesRoutes = require('./src/routes/reportes');
 const equiposRoutes = require('./src/routes/equipos');
 const volumetricosRoutes = require('./src/routes/volumetricos');
 const referenciaRoutes = require('./src/routes/referencia');
+const reactivosController = require('./src/controllers/reactivosController');
 
 
 
@@ -258,6 +259,19 @@ if (require.main === module) {
   startServer()
     .then(server => {
       setupGracefulShutdown(server);
+      // Ejecutar notificaciones de vencimiento al iniciar y cada 24 horas
+      try {
+        reactivosController.ejecutarNotificacionesVencimiento?.();
+      } catch (e) {
+        console.error('Error inicializando notificaciones:', e);
+      }
+      setInterval(() => {
+        try {
+          reactivosController.ejecutarNotificacionesVencimiento?.();
+        } catch (e) {
+          console.error('Error en job de notificaciones:', e);
+        }
+      }, 24 * 60 * 60 * 1000);
     })
     .catch(error => {
       console.error('💥 Error crítico al iniciar el servidor:', error.message);

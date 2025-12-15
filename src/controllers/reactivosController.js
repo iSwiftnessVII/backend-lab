@@ -1,4 +1,6 @@
 const pool = require('../config/db');
+let nodemailer = null;
+try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 
 // Helpers
 function likeParam(q) {
@@ -817,6 +819,232 @@ deleteCatalogo: async (req, res) => {
       console.error('Error exportando Excel reactivos:', err);
       res.status(500).json({ message: 'Error exportando reactivos a Excel' });
     }
+  }
+};
+
+// ===== SUSCRIPCIONES Y NOTIFICACIONES =====
+
+// Crear tabla de suscripciones si no existe
+async function ensureSuscripcionesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS suscripciones_reactivos (
+        email VARCHAR(255) PRIMARY KEY,
+        activo TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('Error creando tabla suscripciones_reactivos:', err);
+  }
+}
+
+// Helper para enviar correo
+async function sendMail(to, subject, text, html) {
+  if (!nodemailer) {
+    console.log(`[email] nodemailer no disponible; simulando envío: to=${to} subject="${subject}"`);
+    return { simulated: true };
+  }
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || 'false') === 'true';
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || `no-reply@backend-lab`;
+  if (!host || !user || !pass) {
+    console.warn('[email] SMTP env incompletos; simulando envío');
+    console.log(`[email] to=${to} text=${text}`);
+    return { simulated: true };
+  }
+  const transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+  const info = await transport.sendMail({ from, to, subject, text, html });
+  return { messageId: info.messageId };
+}
+
+// Endpoint: POST /api/reactivos/suscripciones
+reactivosController.suscribirseReactivos = async (req, res) => {
+  try {
+    const email = String((req.body || {}).email || '').trim().toLowerCase();
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !re.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+    await ensureSuscripcionesTable();
+    await pool.query(
+      `INSERT INTO suscripciones_reactivos (email, activo) VALUES (?, 1)
+       ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
+      [email]
+    );
+    const text = `Te has suscrito a notificaciones de vencimiento de reactivos.\n\nRecibirás alertas a 6, 3, 2 y 1 meses antes del vencimiento.`;
+    const html = `<p>Te has suscrito a notificaciones de vencimiento de reactivos.</p><p>Recibirás alertas a <strong>6, 3, 2 y 1 meses</strong> antes del vencimiento.</p>`;
+    const r = await sendMail(email, 'Suscripción a reactivos confirmada', text, html);
+    return res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('Error suscribirseReactivos:', err);
+    return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
+  }
+};
+
+// Endpoint: GET /api/reactivos/suscripciones/:email
+reactivosController.obtenerEstadoSuscripcion = async (req, res) => {
+  try {
+    const email = String((req.params || {}).email || '').trim().toLowerCase();
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !re.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+    await ensureSuscripcionesTable();
+    const [rows] = await pool.query('SELECT activo FROM suscripciones_reactivos WHERE email = ?', [email]);
+    if (!rows.length) return res.json({ suscrito: false });
+    return res.json({ suscrito: !!rows[0].activo });
+  } catch (err) {
+    console.error('Error obtenerEstadoSuscripcion:', err);
+    return res.status(500).json({ error: 'Error consultando suscripción' });
+  }
+};
+
+// Job: enviar notificaciones de vencimiento (ejecutar diariamente)
+reactivosController.ejecutarNotificacionesVencimiento = async () => {
+  try {
+    await ensureSuscripcionesTable();
+    const [subs] = await pool.query('SELECT email FROM suscripciones_reactivos WHERE activo = 1');
+    const emails = subs.map(s => s.email).filter(Boolean);
+    if (!emails.length) return;
+
+    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE fecha_vencimiento IS NOT NULL');
+    const hoy = new Date();
+    const toMid = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const thresholds = [
+      { label: '6 meses', days: 180 },
+      { label: '3 meses', days: 90 },
+      { label: '2 meses', days: 60 },
+      { label: '1 mes', days: 30 },
+    ];
+
+    const grupos = {};
+    for (const t of thresholds) grupos[t.days] = [];
+
+    for (const r of rows || []) {
+      const d = new Date(r.fecha_vencimiento);
+      if (isNaN(d.getTime())) continue;
+      const days = Math.floor((toMid(d) - toMid(hoy)) / 86400000);
+      // Ventana de ±1 día para evitar perder alertas por horarios
+      for (const t of thresholds) {
+        if (days >= t.days - 1 && days <= t.days + 1) {
+          grupos[t.days].push({
+            nombre: r.nombre,
+            lote: r.lote,
+            codigo: r.codigo,
+            fecha: d.toISOString().slice(0, 10)
+          });
+          break;
+        }
+      }
+    }
+
+    // Construir contenido si hay items
+    const hayItems = thresholds.some(t => grupos[t.days].length);
+    if (!hayItems) return;
+
+    let text = 'Alertas de vencimiento de reactivos:\n\n';
+    let html = '<h3>Alertas de vencimiento de reactivos</h3>';
+    for (const t of thresholds) {
+      const list = grupos[t.days];
+      if (!list.length) continue;
+      text += `== ${t.label} ==\n`;
+      html += `<h4>${t.label}</h4><ul>`;
+      for (const it of list) {
+        text += `- ${it.nombre} | Lote: ${it.lote} | Código: ${it.codigo} | Vence: ${it.fecha}\n`;
+        html += `<li>${it.nombre} — Lote: <strong>${it.lote}</strong> — Código: <strong>${it.codigo}</strong> — Vence: ${it.fecha}</li>`;
+      }
+      text += '\n';
+      html += '</ul>';
+    }
+
+    // Enviar a todos los suscriptores (BCC para privacidad)
+    const subject = 'Notificación de vencimiento de reactivos';
+    for (const to of emails) {
+      try {
+        await sendMail(to, subject, text, html);
+      } catch (e) {
+        console.error('Error enviando notificación a', to, e);
+      }
+    }
+  } catch (err) {
+    console.error('Error ejecutarNotificacionesVencimiento:', err);
+  }
+};
+
+// Endpoint: POST /api/reactivos/notificaciones/test
+reactivosController.enviarNotificacionPrueba = async (req, res) => {
+  try {
+    const email = String((req.body || {}).email || process.env.SMTP_USER || '').trim().toLowerCase();
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !re.test(email)) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+    // Crear/actualizar reactivo de prueba a 30 días con campos requeridos
+    const addDays = (n) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10);
+    };
+    const fecha = addDays(30);
+    const hoy = new Date(); const fechaAdq = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString().slice(0,10);
+    // Asegurar catálogo
+    await pool.query(
+      `INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre)`,
+      ['EXPTEST', 'Reactivo de Prueba 30D', 'No controlado', 'No peligro', 'Elemento de prueba para notificaciones']
+    );
+    // Obtener IDs requeridos
+    const idFrom = async (table, nombre) => {
+      const [rows] = await pool.query(`SELECT id FROM ${table} WHERE nombre = ? LIMIT 1`, [nombre]);
+      return rows?.[0]?.id || 1;
+    };
+    const tipo_id = await idFrom('tipo_reactivo', 'No controlado');
+    const clasificacion_id = await idFrom('clasificacion_sga', 'No peligro');
+    const unidad_id = await idFrom('unidades', 'mL');
+    const estado_id = await idFrom('estado_fisico', 'Liquido');
+    const almacenamiento_id = await idFrom('almacenamiento', 'No aplica');
+    const tipo_recipiente_id = await idFrom('tipo_recipiente', 'Vidrio');
+    // Insertar reactivo completo
+    await pool.query(
+      `INSERT INTO reactivos (
+        lote, codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
+        fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
+        almacenamiento_id, tipo_recipiente_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE 
+        fecha_vencimiento = VALUES(fecha_vencimiento),
+        nombre = VALUES(nombre),
+        marca = VALUES(marca),
+        presentacion = VALUES(presentacion),
+        presentacion_cant = VALUES(presentacion_cant),
+        cantidad_total = VALUES(cantidad_total),
+        fecha_adquisicion = VALUES(fecha_adquisicion),
+        tipo_id = VALUES(tipo_id),
+        clasificacion_id = VALUES(clasificacion_id),
+        unidad_id = VALUES(unidad_id),
+        estado_id = VALUES(estado_id),
+        almacenamiento_id = VALUES(almacenamiento_id),
+        tipo_recipiente_id = VALUES(tipo_recipiente_id)`,
+      [
+        'TEST-EXP-30D', 'EXPTEST', 'Reactivo de Prueba 30D', 'LIBA', null, null, 
+        1, 1, 1,
+        fechaAdq, fecha, 'Prueba de notificación',
+        tipo_id, clasificacion_id, unidad_id, estado_id, almacenamiento_id, tipo_recipiente_id
+      ]
+    );
+    const subject = 'Notificación de vencimiento (prueba)';
+    const text = `Alertas de vencimiento (prueba):\n\n- Reactivo de Prueba 30D | Lote: TEST-EXP-30D | Código: EXPTEST | Vence: ${fecha}\n`;
+    const html = `<h3>Alertas de vencimiento (prueba)</h3><ul><li>Reactivo de Prueba 30D — Lote: <strong>TEST-EXP-30D</strong> — Código: <strong>EXPTEST</strong> — Vence: ${fecha}</li></ul>`;
+    const r = await sendMail(email, subject, text, html);
+    return res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('Error enviarNotificacionPrueba:', err);
+    return res.status(500).json({ error: 'No se pudo enviar la notificación de prueba' });
   }
 };
 
