@@ -43,6 +43,19 @@ exports.crearMaterial = async (req, res) => {
       modelo || null
     ]);
 
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fecha, `Creación de material volumétrico: ${codigo_id}`, JSON.stringify(req.body)]
+      );
+    }
+
     res.status(201).json({ message: 'Material volumétrico registrado correctamente' });
   } catch (error) {
     console.error('Error al registrar material volumétrico:', error);
@@ -92,6 +105,23 @@ exports.actualizarMaterial = async (req, res) => {
       modelo
     } = req.body;
 
+    // 1. Obtener datos actuales
+    const [rowsCurrent] = await pool.execute('SELECT * FROM material_volumetrico WHERE codigo_id = ?', [codigo]);
+    if (rowsCurrent.length === 0) {
+      return res.status(404).json({ message: 'Material no encontrado' });
+    }
+    const datosActuales = rowsCurrent[0];
+
+    const datosNuevos = {
+      nombre_material,
+      volumen_nominal,
+      rango_volumen: rango_volumen || null,
+      marca: marca || null,
+      resolucion: resolucion || null,
+      error_max_permitido: error_max_permitido || null,
+      modelo: modelo || null
+    };
+
     const sql = `UPDATE material_volumetrico SET 
       nombre_material = ?, 
       volumen_nominal = ?, 
@@ -102,19 +132,51 @@ exports.actualizarMaterial = async (req, res) => {
       modelo = ?
     WHERE codigo_id = ?`;
 
-    const [result] = await pool.execute(sql, [
-      nombre_material,
-      volumen_nominal,
-      rango_volumen || null,
-      marca || null,
-      resolucion || null,
-      error_max_permitido || null,
-      modelo || null,
+    await pool.execute(sql, [
+      datosNuevos.nombre_material,
+      datosNuevos.volumen_nominal,
+      datosNuevos.rango_volumen,
+      datosNuevos.marca,
+      datosNuevos.resolucion,
+      datosNuevos.error_max_permitido,
+      datosNuevos.modelo,
       codigo
     ]);
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Material no encontrado' });
+    // Calcular diferencias y registrar log
+    if (req.user && req.user.id) {
+      const cambios = {};
+      const normalize = (val) => {
+        if (val instanceof Date) return val.toISOString().split('T')[0];
+        if (val === null || val === undefined) return '';
+        return String(val).trim();
+      };
+
+      for (const key in datosNuevos) {
+        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+      }
+
+      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
+
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de material volumétrico: ${codigo}`, detallesCambios]
+      );
     }
 
     const [updated] = await pool.execute('SELECT * FROM material_volumetrico WHERE codigo_id = ?', [codigo]);
@@ -133,6 +195,19 @@ exports.eliminarMaterial = async (req, res) => {
     
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Material no encontrado' });
+    }
+    
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ELIMINAR', req.user.id, fecha, `Eliminación de material volumétrico: ${codigo}`, null]
+      );
     }
     
     res.json({ message: 'Material volumétrico eliminado correctamente' });
@@ -170,6 +245,19 @@ exports.crearHistorial = async (req, res) => {
       realizo || null,
       superviso || null
     ]);
+
+    if (req.user && req.user.id) {
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de historial para volumétrico: ${codigo_material}`, JSON.stringify(req.body)]
+      );
+    }
 
     res.status(201).json({ message: 'Historial registrado correctamente' });
   } catch (error) {
@@ -213,15 +301,28 @@ exports.obtenerNextHistorial = async (req, res) => {
 exports.actualizarHistorial = async (req, res) => {
   try {
     const { codigo, consecutivo } = req.params;
+
+    // 1. Obtener datos actuales
+    const [rowsCurrent] = await pool.execute(
+      'SELECT * FROM historial_volumetrico WHERE codigo_material = ? AND consecutivo = ?',
+      [codigo, consecutivo]
+    );
+    if (rowsCurrent.length === 0) {
+      return res.status(404).json({ message: 'Registro de historial no encontrado' });
+    }
+    const datosActuales = rowsCurrent[0];
+
     const allowedFields = ['fecha', 'tipo_historial_instrumento', 'codigo_registro', 'realizo', 'superviso'];
     
     const updates = [];
     const values = [];
+    const datosNuevos = {};
     
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
         updates.push(`${field} = ?`);
         values.push(req.body[field]);
+        datosNuevos[field] = req.body[field];
       }
     });
 
@@ -232,16 +333,49 @@ exports.actualizarHistorial = async (req, res) => {
     values.push(codigo, consecutivo);
     const sql = `UPDATE historial_volumetrico SET ${updates.join(', ')} WHERE codigo_material = ? AND consecutivo = ?`;
     
-    const [result] = await pool.execute(sql, values);
+    await pool.execute(sql, values);
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Registro de historial no encontrado' });
+    // 2. Calcular diferencias y registrar log
+    if (req.user && req.user.id) {
+      const cambios = {};
+      const normalize = (val) => {
+        if (val instanceof Date) return val.toISOString().split('T')[0];
+        if (val === null || val === undefined) return '';
+        return String(val).trim();
+      };
+
+      for (const key in datosNuevos) {
+        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+      }
+
+      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
+      
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de historial para volumétrico: ${codigo}`, detallesCambios]
+      );
     }
 
     const [updated] = await pool.execute(
       'SELECT * FROM historial_volumetrico WHERE codigo_material = ? AND consecutivo = ?',
       [codigo, consecutivo]
     );
+
     res.json(updated[0]);
   } catch (error) {
     console.error('Error al actualizar historial:', error);
@@ -294,6 +428,19 @@ exports.crearIntervalo = async (req, res) => {
       incertidumbre_exp || null
     ]);
 
+    if (req.user && req.user.id) {
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de intervalo para volumétrico: ${codigo_material}`, JSON.stringify(req.body)]
+      );
+    }
+
     res.status(201).json({ message: 'Intervalo registrado correctamente' });
   } catch (error) {
     console.error('Error al registrar intervalo:', error);
@@ -336,6 +483,17 @@ exports.obtenerNextIntervalo = async (req, res) => {
 exports.actualizarIntervalo = async (req, res) => {
   try {
     const { codigo, consecutivo } = req.params;
+
+    // 1. Obtener datos actuales
+    const [rowsCurrent] = await pool.execute(
+      'SELECT * FROM intervalo_volumetrico WHERE codigo_material = ? AND consecutivo = ?',
+      [codigo, consecutivo]
+    );
+    if (rowsCurrent.length === 0) {
+      return res.status(404).json({ message: 'Registro de intervalo no encontrado' });
+    }
+    const datosActuales = rowsCurrent[0];
+
     const allowedFields = [
       'valor_nominal', 'fecha_c1', 'error_c1', 'fecha_c2', 'error_c2',
       'diferencia_tiempo_dias', 'desviacion_abs', 'deriva', 'tolerancia',
@@ -344,11 +502,13 @@ exports.actualizarIntervalo = async (req, res) => {
     
     const updates = [];
     const values = [];
+    const datosNuevos = {};
     
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
         updates.push(`${field} = ?`);
         values.push(req.body[field]);
+        datosNuevos[field] = req.body[field];
       }
     });
 
@@ -359,10 +519,42 @@ exports.actualizarIntervalo = async (req, res) => {
     values.push(codigo, consecutivo);
     const sql = `UPDATE intervalo_volumetrico SET ${updates.join(', ')} WHERE codigo_material = ? AND consecutivo = ?`;
     
-    const [result] = await pool.execute(sql, values);
+    await pool.execute(sql, values);
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Registro de intervalo no encontrado' });
+    // 2. Calcular diferencias y registrar log
+    if (req.user && req.user.id) {
+      const cambios = {};
+      const normalize = (val) => {
+        if (val instanceof Date) return val.toISOString().split('T')[0];
+        if (val === null || val === undefined) return '';
+        return String(val).trim();
+      };
+
+      for (const key in datosNuevos) {
+        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+      }
+
+      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
+      
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de intervalo para volumétrico: ${codigo}`, detallesCambios]
+      );
     }
 
     const [updated] = await pool.execute(
@@ -444,10 +636,29 @@ exports.descargarPdf = async (req, res) => {
 exports.eliminarPdf = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Obtener info antes de eliminar para el log
+    const [rows] = await pool.execute('SELECT material_id, nombre_archivo FROM pdfs_material WHERE id = ?', [id]);
+    
     const [result] = await pool.execute('DELETE FROM pdfs_material WHERE id = ?', [id]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Archivo no encontrado' });
     }
+
+    if (req.user && req.user.id && rows.length > 0) {
+      const pdfInfo = rows[0];
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ELIMINAR', req.user.id, fechaLog, `Eliminación de PDF para volumétrico: ${pdfInfo.material_id}`, JSON.stringify({ id, ...pdfInfo })]
+      );
+    }
+
     res.json({ message: 'Archivo eliminado' });
   } catch (error) {
     console.error('Error eliminar PDF:', error);

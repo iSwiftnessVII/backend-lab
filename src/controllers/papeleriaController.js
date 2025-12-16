@@ -77,9 +77,14 @@ const papeleriaController = {
       
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'CREAR', 'CATALOGO_PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'CREAR', 'CATALOGO_PAPELERIA', fecha]
         );
       }
 
@@ -112,9 +117,14 @@ const papeleriaController = {
       
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'CATALOGO_PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CATALOGO_PAPELERIA', fecha]
         );
       }
 
@@ -224,22 +234,33 @@ const papeleriaController = {
 
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'CREAR', 'PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'CREAR', 'PAPELERIA', fecha]
         );
 
         // REGISTRO DE MOVIMIENTO
         await pool.query(
-          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
-          ['PAPELERIA', result.insertId.toString(), req.user.id, 'ENTRADA']
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, ?)',
+          ['PAPELERIA', result.insertId.toString(), req.user.id, 'ENTRADA', fecha]
         );
       }
 
       res.status(201).json({ message: 'Papelería creada correctamente' });
     } catch (err) {
+      if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.errno === 1452) {
+        return res.status(400).json({ message: 'El item de catálogo especificado no existe.' });
+      }
+      if (err.code === 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD') {
+        return res.status(400).json({ message: 'Valor inválido para uno de los campos (posiblemente Enum).' });
+      }
       console.error('Error POST / (papeleria):', err);
-      res.status(500).json({ message: 'Error creando papelería' });
+      res.status(500).json({ message: 'Error creando papelería', error: err.message });
     }
   },
 
@@ -260,39 +281,119 @@ const papeleriaController = {
     } = req.body || {};
 
     try {
-      const [result] = await pool.query(
+      // 1. Obtener datos actuales para comparar
+      const [rows] = await pool.query('SELECT * FROM papeleria WHERE id = ?', [id]);
+      if (rows.length === 0) {
+        return res.status(404).json({ message: 'No encontrado' });
+      }
+      const datosActuales = rows[0];
+
+      // 2. Preparar nuevos datos
+      const datosNuevos = {
+        item_catalogo,
+        nombre,
+        cantidad_adquirida,
+        cantidad_existente,
+        presentacion: presentacion || null,
+        marca: marca || null,
+        descripcion: descripcion || null,
+        fecha_adquisicion: fecha_adquisicion || null,
+        ubicacion: ubicacion || null,
+        observaciones: observaciones || null
+      };
+
+      // 3. Ejecutar Update
+      await pool.query(
         `UPDATE papeleria SET
           item_catalogo = ?, nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?,
           presentacion = ?, marca = ?, descripcion = ?, fecha_adquisicion = ?, ubicacion = ?, observaciones = ?
         WHERE id = ?`,
         [
-          item_catalogo,
-          nombre,
-          cantidad_adquirida,
-          cantidad_existente,
-          presentacion || null,
-          marca || null,
-          descripcion || null,
-          fecha_adquisicion || null,
-          ubicacion || null,
-          observaciones || null,
+          datosNuevos.item_catalogo,
+          datosNuevos.nombre,
+          datosNuevos.cantidad_adquirida,
+          datosNuevos.cantidad_existente,
+          datosNuevos.presentacion,
+          datosNuevos.marca,
+          datosNuevos.descripcion,
+          datosNuevos.fecha_adquisicion,
+          datosNuevos.ubicacion,
+          datosNuevos.observaciones,
           id
         ]
       );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // 4. Calcular diferencias para el log
+      let detallesCambios = null;
+      const cambios = {};
+      
+      const normalize = (val) => {
+        if (val instanceof Date) return val.toISOString().split('T')[0]; // YYYY-MM-DD
+        if (val === null || val === undefined) return '';
+        return String(val).trim();
+      };
+
+      for (const key in datosNuevos) {
+        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+      }
+
+      // Enriquecer IDs con nombres
+      if (cambios.item_catalogo) {
+        const oldId = datosActuales.item_catalogo;
+        const newId = datosNuevos.item_catalogo;
+        const ids = [oldId, newId].filter(id => id != null);
+        
+        if (ids.length > 0) {
+            try {
+                const [rows] = await pool.query('SELECT item, nombre FROM catalogo_papeleria WHERE item IN (?)', [ids]);
+                const nameMap = {};
+                rows.forEach(r => nameMap[r.item] = r.nombre);
+
+                cambios['item_catalogo'] = {
+                    anterior: (oldId ? (nameMap[oldId] || oldId) : '(vacío)'),
+                    nuevo: (newId ? (nameMap[newId] || newId) : '(vacío)')
+                };
+            } catch (errName) {
+                console.error('Error obteniendo nombres para log papeleria:', errName);
+            }
+        }
+      }
+
+      if (Object.keys(cambios).length > 0) {
+        detallesCambios = JSON.stringify(cambios);
+      }
 
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, detalle) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'PAPELERIA', fecha, detallesCambios]
         );
       }
 
       res.json({ message: 'Papelería actualizada correctamente' });
     } catch (err) {
+      if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.errno === 1452) {
+        return res.status(400).json({ message: 'El item de catálogo especificado no existe.' });
+      }
       console.error('Error PUT /:id (papeleria):', err);
-      res.status(500).json({ message: 'Error actualizando papelería' });
+      res.status(500).json({ message: 'Error actualizando papelería', error: err.message });
     }
   },
 
@@ -327,15 +428,20 @@ const papeleriaController = {
 
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'AJUSTAR_EXISTENCIAS', 'PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'AJUSTAR_EXISTENCIAS', 'PAPELERIA', fecha]
         );
 
         // REGISTRO DE MOVIMIENTO
         await pool.query(
-          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
-          ['PAPELERIA', id.toString(), req.user.id, 'AJUSTE']
+          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, ?)',
+          ['PAPELERIA', id.toString(), req.user.id, 'AJUSTE', fecha]
         );
       }
 
@@ -358,9 +464,14 @@ const papeleriaController = {
 
       // REGISTRO DE LOG - Con req.user.id
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'PAPELERIA']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'PAPELERIA', fecha]
         );
       }
 

@@ -109,9 +109,14 @@ const reactivosController = {
         [codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion || null]
       );
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS', fecha]
         );
       }
       res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion: descripcion || null });
@@ -128,19 +133,76 @@ const reactivosController = {
   updateCatalogo: async (req, res) => {
     const { codigo } = req.params;
     const { nombre, tipo_reactivo, clasificacion_sga, descripcion } = req.body || {};
+    
     try {
-      const [result] = await pool.query(
+      // 1. Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+      if (rowsCurrent.length === 0) {
+        return res.status(404).json({ message: 'No encontrado' });
+      }
+      const datosActuales = rowsCurrent[0];
+
+      // 2. Preparar datos nuevos
+      const datosNuevos = {
+        nombre: nombre !== undefined ? nombre : datosActuales.nombre,
+        tipo_reactivo: tipo_reactivo !== undefined ? tipo_reactivo : datosActuales.tipo_reactivo,
+        clasificacion_sga: clasificacion_sga !== undefined ? clasificacion_sga : datosActuales.clasificacion_sga,
+        descripcion: descripcion !== undefined ? descripcion : datosActuales.descripcion
+      };
+
+      // 3. Actualizar
+      await pool.query(
         'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ?, descripcion = ? WHERE codigo = ?',
-        [nombre || null, tipo_reactivo || null, clasificacion_sga || null, descripcion || null, codigo]
+        [
+          datosNuevos.nombre || null, 
+          datosNuevos.tipo_reactivo || null, 
+          datosNuevos.clasificacion_sga || null, 
+          datosNuevos.descripcion || null, 
+          codigo
+        ]
       );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+
+      // 4. Calcular diferencias y registrar log
       if (req.user && req.user.id) {
+        const cambios = {};
+        const normalize = (val) => {
+          if (val === null || val === undefined) return '';
+          return String(val).trim();
+        };
+
+        const campos = ['nombre', 'tipo_reactivo', 'clasificacion_sga', 'descripcion'];
+        for (const key of campos) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+
+        const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
+        
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS', fecha, `Actualización de catálogo: ${codigo}`, detallesCambios]
         );
       }
-      res.json({ codigo, nombre: nombre || null, tipo_reactivo: tipo_reactivo || null, clasificacion_sga: clasificacion_sga || null, descripcion: descripcion || null });
+      
+      res.json({ 
+        codigo, 
+        nombre: datosNuevos.nombre || null, 
+        tipo_reactivo: datosNuevos.tipo_reactivo || null, 
+        clasificacion_sga: datosNuevos.clasificacion_sga || null, 
+        descripcion: datosNuevos.descripcion || null 
+      });
     } catch (err) {
       console.error('Error PUT /catalogo/:codigo:', err);
       res.status(500).json({ message: 'Error actualizando catálogo' });
@@ -173,9 +235,14 @@ deleteCatalogo: async (req, res) => {
 
       // REGISTRO DE LOG - Solo si hay usuario autenticado
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'CATALOGO_REACTIVOS']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CATALOGO_REACTIVOS', fecha]
         );
       }
 
@@ -293,9 +360,14 @@ deleteCatalogo: async (req, res) => {
 
         // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
+            const fecha = new Intl.DateTimeFormat('sv-SE', {
+                timeZone: 'America/Bogota',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            }).format(new Date());
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-                [req.user.id, 'SUBIR_PDF', 'REACTIVOS']
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+                [req.user.id, 'SUBIR_PDF', 'REACTIVOS', fecha]
             );
         }
 
@@ -319,7 +391,7 @@ deleteCatalogo: async (req, res) => {
         // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
                 [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS']
             );
         }
@@ -430,7 +502,7 @@ deleteCatalogo: async (req, res) => {
     // REGISTRO DE LOG - MODIFICAR
     if (req.user && req.user.id) {
       await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
         [req.user.id, 'SUBIR_PDF', 'REACTIVOS']
       );
     }
@@ -454,9 +526,14 @@ deleteCatalogo: async (req, res) => {
 
     // REGISTRO DE LOG - MODIFICAR
     if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
       await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-        [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS']
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS', fecha]
       );
     }
 
@@ -590,13 +667,13 @@ deleteCatalogo: async (req, res) => {
       // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
                 [req.user.id, 'CREAR', 'REACTIVOS']
             );
 
             // REGISTRO DE MOVIMIENTO
             await pool.query(
-                'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento) VALUES (?, ?, ?, ?)',
+                'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
                 ['REACTIVO', lote, req.user.id, 'ENTRADA']
             );
         }
@@ -616,6 +693,14 @@ deleteCatalogo: async (req, res) => {
     const { lote } = req.params;
     const r = req.body || {};
     try {
+      // 1. Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM reactivos WHERE lote = ?', [lote]);
+      if (rowsCurrent.length === 0) {
+        return res.status(404).json({ message: 'No encontrado' });
+      }
+      const datosActuales = rowsCurrent[0];
+
+      // 2. Preparar datos nuevos (Lógica existente)
       const codigo = trimStr(r.codigo);
       const nombre = trimStr(r.nombre);
       const presentacion = numOrNull(r.presentacion);
@@ -638,7 +723,14 @@ deleteCatalogo: async (req, res) => {
       const almacenamiento_id = numOrNull(r.almacenamiento_id);
       const tipo_recipiente_id = numOrNull(r.tipo_recipiente_id);
 
-      const [result] = await pool.query(
+      const datosNuevos = {
+        codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
+        fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
+        almacenamiento_id, tipo_recipiente_id
+      };
+
+      // 3. Actualizar
+      await pool.query(
         `UPDATE reactivos SET
           codigo = ?, nombre = ?, marca = ?, referencia = ?, cas = ?, presentacion = ?, presentacion_cant = ?, cantidad_total = ?,
           fecha_adquisicion = ?, fecha_vencimiento = ?, observaciones = ?, tipo_id = ?, clasificacion_id = ?, unidad_id = ?, estado_id = ?,
@@ -650,15 +742,71 @@ deleteCatalogo: async (req, res) => {
           almacenamiento_id, tipo_recipiente_id, lote
         ]
       );
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
 
-      // REGISTRO DE LOG - MODIFICADO
-        if (req.user && req.user.id) {
-            await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-                [req.user.id, 'ACTUALIZAR', 'REACTIVOS']
-            );
+      // 4. Calcular diferencias y registrar log
+      if (req.user && req.user.id) {
+        const cambios = {};
+        const normalize = (val) => {
+          if (val instanceof Date) return val.toISOString().split('T')[0];
+          if (val === null || val === undefined) return '';
+          return String(val).trim();
+        };
+
+        for (const key in datosNuevos) {
+          if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+            const valAnt = normalize(datosActuales[key]);
+            const valNuevo = normalize(datosNuevos[key]);
+            if (valAnt !== valNuevo) {
+              cambios[key] = {
+                anterior: valAnt || '(vacío)',
+                nuevo: valNuevo || '(vacío)'
+              };
+            }
+          }
         }
+
+        // Enriquecer IDs con nombres para el log
+        const idFields = {
+            unidad_id: { table: 'unidades', label: 'unidad' },
+            tipo_id: { table: 'tipo_reactivo', label: 'tipo' },
+            clasificacion_id: { table: 'clasificacion_sga', label: 'clasificacion' },
+            estado_id: { table: 'estado_fisico', label: 'estado' },
+            almacenamiento_id: { table: 'almacenamiento', label: 'almacenamiento' },
+            tipo_recipiente_id: { table: 'tipo_recipiente', label: 'recipiente' }
+        };
+
+        for (const [field, config] of Object.entries(idFields)) {
+            if (cambios[field]) {
+                const oldId = datosActuales[field];
+                const newId = datosNuevos[field];
+                const ids = [oldId, newId].filter(id => id != null);
+                
+                if (ids.length > 0) {
+                    try {
+                        const [rows] = await pool.query(`SELECT id, nombre FROM ${config.table} WHERE id IN (?)`, [ids]);
+                        const nameMap = {};
+                        rows.forEach(r => nameMap[r.id] = r.nombre);
+
+                        cambios[config.label] = {
+                            anterior: (oldId ? (nameMap[oldId] || oldId) : '(vacío)'),
+                            nuevo: (newId ? (nameMap[newId] || newId) : '(vacío)')
+                        };
+                        delete cambios[field];
+                    } catch (errName) {
+                        console.error(`Error obteniendo nombres para log ${field}:`, errName);
+                        // Si falla, se queda con el ID original en cambios[field]
+                    }
+                }
+            }
+        }
+
+        const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
+        
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'REACTIVOS', `Actualización de reactivo: ${lote}`, detallesCambios]
+        );
+      }
 
       res.json({ message: 'Actualizado' });
     } catch (err) {
@@ -677,43 +825,7 @@ deleteCatalogo: async (req, res) => {
     }
 
 
-  // Exportación Excel de reactivos
-  const ExcelJS = require('exceljs');
-  reactivosController.exportReactivosExcel = async (req, res) => {
-    try {
-      const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC');
-      const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('Reactivos');
 
-      if (!rows.length) {
-        sheet.addRow(['No hay reactivos']);
-      } else {
-        // Cabeceras dinámicas basadas en keys del primer registro
-        const headers = Object.keys(rows[0]);
-        sheet.addRow(headers);
-        for (const r of rows) {
-          sheet.addRow(headers.map(h => r[h]));
-        }
-        // Estilos simples
-        const headerRow = sheet.getRow(1);
-        headerRow.font = { bold: true };
-        headerRow.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00B8B5' } };
-          cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
-        });
-        sheet.columns.forEach(col => { col.width = Math.min(40, Math.max(12, col.header ? String(col.header).length + 2 : 15)); });
-      }
-
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      const filename = 'reactivos_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.xlsx';
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      await workbook.xlsx.write(res);
-      res.end();
-    } catch (err) {
-      console.error('Error exportando Excel reactivos:', err);
-      res.status(500).json({ message: 'Error exportando reactivos a Excel' });
-    }
-  };
 
     const { lote } = req.params;
     try {
@@ -723,7 +835,7 @@ deleteCatalogo: async (req, res) => {
         // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
                 [req.user.id, 'ELIMINAR', 'REACTIVOS']
             );
         }

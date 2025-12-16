@@ -1,6 +1,52 @@
 const pool = require('../config/db');
 
 const logsController = {
+    // Registrar una nueva acción
+    crearLog: async (req, res) => {
+        try {
+            const { modulo, accion, descripcion, detalle } = req.body;
+            const usuario_id = req.user ? req.user.id : null; // Asumiendo que el middleware auth popula req.user
+
+            // Validar campos requeridos
+            if (!modulo || !accion) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Modulo y accion son requeridos'
+                });
+            }
+
+            // Fecha hora colombiana
+            const fecha = new Intl.DateTimeFormat('sv-SE', {
+                timeZone: 'America/Bogota',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            }).format(new Date());
+
+            const [result] = await pool.query(
+                `INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) 
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [modulo, accion, usuario_id, fecha, descripcion, JSON.stringify(detalle)]
+            );
+
+            res.status(201).json({
+                success: true,
+                message: 'Log registrado correctamente',
+                id: result.insertId
+            });
+
+        } catch (error) {
+            console.error('Error creando log:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Error interno del servidor'
+            });
+        }
+    },
+
     // Obtener logs con filtros
     getLogs: async (req, res) => {
         try {
@@ -45,14 +91,16 @@ const logsController = {
             }
 
             // Consulta principal con JOIN para obtener email de usuario
+            console.log('Ejecutando query de logs:', { whereConditions, queryParams, limit, offset });
+
             const [logs] = await pool.query(
-                `SELECT l.*, u.email as usuario_email
+                `SELECT l.*, u.email as usuario_email, u.email as usuario_nombre
    FROM logs_acciones l
    LEFT JOIN usuarios u ON l.usuario_id = u.id_usuario
    WHERE ${whereConditions.join(' AND ')}
    ORDER BY l.fecha DESC
    LIMIT ? OFFSET ?`,
-                [...queryParams, parseInt(limit), offset]
+                [...queryParams, Number(limit), Number(offset)]
             );
 
             // Contar total para paginación

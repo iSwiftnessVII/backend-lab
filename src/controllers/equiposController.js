@@ -274,12 +274,25 @@ exports.actualizarEquipo = async (req, res) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+
+      // 1. Obtener datos actuales
+      const [rowsCurrent] = await conn.execute('SELECT * FROM hv_equipos WHERE codigo_identificacion = ?', [codigo]);
+      if (rowsCurrent.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ message: 'Equipo no encontrado' });
+      }
+      const datosActuales = rowsCurrent[0];
+
       const fields = [];
       const values = [];
+      const datosNuevos = {};
+
       for (const key of Object.keys(body)) {
         if (allowed.includes(key)) {
           fields.push(`${key} = ?`);
-          values.push(typeof body[key] === 'undefined' ? null : body[key]);
+          const val = typeof body[key] === 'undefined' ? null : body[key];
+          values.push(val);
+          datosNuevos[key] = val;
         }
       }
       if (!fields.length) {
@@ -289,10 +302,7 @@ exports.actualizarEquipo = async (req, res) => {
       values.push(codigo);
       const sql = `UPDATE hv_equipos SET ${fields.join(', ')} WHERE codigo_identificacion = ?`;
       const [result] = await conn.execute(sql, values);
-      if (result.affectedRows === 0) {
-        await conn.rollback();
-        return res.status(404).json({ message: 'Equipo no encontrado' });
-      }
+      
       const [ftExists] = await conn.execute(
         'SELECT 1 FROM ficha_tecnica_de_equipos WHERE codigo_identificador = ? LIMIT 1',
         [codigo]
@@ -376,6 +386,49 @@ exports.actualizarEquipo = async (req, res) => {
         }
       }
       await conn.commit();
+
+      // 4. Calcular diferencias
+      let detallesCambios = null;
+      const cambios = {};
+      
+      const normalize = (val) => {
+        if (val instanceof Date) return val.toISOString().split('T')[0];
+        if (val === null || val === undefined) return '';
+        return String(val).trim();
+      };
+
+      for (const key in datosNuevos) {
+        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+          const valAnt = normalize(datosActuales[key]);
+          const valNuevo = normalize(datosNuevos[key]);
+          
+          if (valAnt !== valNuevo) {
+            cambios[key] = {
+              anterior: valAnt || '(vacío)',
+              nuevo: valNuevo || '(vacío)'
+            };
+          }
+        }
+      }
+
+      if (Object.keys(cambios).length > 0) {
+        detallesCambios = JSON.stringify(cambios);
+      }
+
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+        
+        // Usamos pool para el log, independiente de la transacción principal
+        await pool.query(
+          'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+          ['EQUIPOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de equipo: ${codigo}`, detallesCambios]
+        );
+      }
+
       const [rows] = await conn.execute(
         `SELECT codigo_identificacion, nombre, modelo, marca, inventario_sena, ubicacion, acreditacion, tipo_manual, numero_serie, tipo, clasificacion, manual_usuario, puesta_en_servicio, fecha_adquisicion, requerimientos_equipo, elementos_electricos, voltaje, elementos_mecanicos, frecuencia, campo_medicion, exactitud, sujeto_verificar, sujeto_calibracion, resolucion_division, sujeto_calificacion, accesorios FROM hv_equipos WHERE codigo_identificacion = ?`,
         [codigo]

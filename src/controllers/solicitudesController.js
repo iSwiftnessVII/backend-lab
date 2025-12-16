@@ -120,9 +120,14 @@ const solicitudesController = {
       );
 
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'CREAR', 'CLIENTES']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'CREAR', 'CLIENTES', fecha]
         );
       }
 
@@ -149,21 +154,58 @@ const solicitudesController = {
     const id = req.params.id;
     const body = req.body || {};
     try {
+      // Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM clientes WHERE id_cliente = ?', [id]);
+      if (!rowsCurrent.length) return res.status(404).json({ message: 'Cliente no encontrado' });
+      const datosActuales = rowsCurrent[0];
+
       const fields = [];
       const values = [];
+      const datosNuevos = {};
+
       for (const k of Object.keys(body)) {
         fields.push(`${k} = ?`);
         values.push(body[k]);
+        datosNuevos[k] = body[k];
       }
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
       await pool.query(`UPDATE clientes SET ${fields.join(', ')} WHERE id_cliente = ?`, values);
 
       if (req.user && req.user.id) {
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'CLIENTES']
-        );
+        const cambios = {};
+        const normalize = (val) => {
+          if (val instanceof Date) return val.toISOString().split('T')[0];
+          if (val === null || val === undefined) return '';
+          return String(val).trim();
+        };
+
+        for (const key in datosNuevos) {
+          if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+            // Comparar solo si la clave existe en datosActuales (para evitar undefined en columnas que no están en select * si pasara algo raro, pero aquí es seguro)
+            const valAnt = normalize(datosActuales[key]);
+            const valNuevo = normalize(datosNuevos[key]);
+            if (valAnt !== valNuevo) {
+              cambios[key] = {
+                anterior: valAnt || '(vacío)',
+                nuevo: valNuevo || '(vacío)'
+              };
+            }
+          }
+        }
+
+        if (Object.keys(cambios).length > 0) {
+           const fecha = new Intl.DateTimeFormat('sv-SE', {
+              timeZone: 'America/Bogota',
+              year: 'numeric', month: '2-digit', day: '2-digit',
+              hour: '2-digit', minute: '2-digit', second: '2-digit'
+           }).format(new Date());
+
+           await pool.query(
+              'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+              [req.user.id, 'ACTUALIZAR', 'CLIENTES', fecha, `Actualización cliente: ${id}`, JSON.stringify(cambios)]
+           );
+        }
       }
 
       res.json({ updated: true });
@@ -190,9 +232,14 @@ const solicitudesController = {
       }
 
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'CLIENTES']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'CLIENTES', fecha]
         );
       }
 
@@ -394,9 +441,14 @@ const solicitudesController = {
       const [result] = await pool.query(sql, params);
 
       if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'CREAR', 'SOLICITUDES']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
+          [req.user.id, 'CREAR', 'SOLICITUDES', fecha]
         );
       }
 
@@ -426,21 +478,57 @@ const solicitudesController = {
     const id = req.params.id;
     const body = req.body || {};
     try {
+      // Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM Solicitudes WHERE solicitud_id = ?', [id]);
+      if (!rowsCurrent.length) return res.status(404).json({ message: 'Solicitud no encontrada' });
+      const datosActuales = rowsCurrent[0];
+
       const fields = [];
       const values = [];
+      const datosNuevos = {};
+
       for (const k of Object.keys(body)) {
         fields.push(`${k} = ?`);
         values.push(body[k]);
+        datosNuevos[k] = body[k];
       }
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
       await pool.query(`UPDATE Solicitudes SET ${fields.join(', ')} WHERE solicitud_id = ?`, values);
 
       if (req.user && req.user.id) {
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'SOLICITUDES']
-        );
+        const cambios = {};
+        const normalize = (val) => {
+          if (val instanceof Date) return val.toISOString().split('T')[0];
+          if (val === null || val === undefined) return '';
+          return String(val).trim();
+        };
+
+        for (const key in datosNuevos) {
+          if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
+            const valAnt = normalize(datosActuales[key]);
+            const valNuevo = normalize(datosNuevos[key]);
+            if (valAnt !== valNuevo) {
+              cambios[key] = {
+                anterior: valAnt || '(vacío)',
+                nuevo: valNuevo || '(vacío)'
+              };
+            }
+          }
+        }
+
+        if (Object.keys(cambios).length > 0) {
+           const fecha = new Intl.DateTimeFormat('sv-SE', {
+              timeZone: 'America/Bogota',
+              year: 'numeric', month: '2-digit', day: '2-digit',
+              hour: '2-digit', minute: '2-digit', second: '2-digit'
+           }).format(new Date());
+
+           await pool.query(
+              'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+              [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Actualización solicitud: ${id}`, JSON.stringify(cambios)]
+           );
+        }
       }
 
       res.json({ updated: true });
@@ -457,6 +545,10 @@ const solicitudesController = {
     const b = req.body || {};
     
     try {
+      // Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM oferta WHERE id_solicitud = ?', [id_solicitud]);
+      const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
+
       const [update] = await pool.query(
         `UPDATE oferta SET genero_cotizacion = ?, valor_cotizacion = ?, fecha_envio_oferta = ?, realizo_seguimiento_oferta = ?, observacion_oferta = ?
          WHERE id_solicitud = ?`,
@@ -470,7 +562,9 @@ const solicitudesController = {
         ]
       );
       
+      let isInsert = false;
       if (!update.affectedRows) {
+        isInsert = true;
         await pool.query(
           `INSERT INTO oferta (id_solicitud, genero_cotizacion, valor_cotizacion, fecha_envio_oferta, realizo_seguimiento_oferta, observacion_oferta)
            VALUES (?,?,?,?,?,?)`,
@@ -483,6 +577,51 @@ const solicitudesController = {
             b.observacion_oferta || null
           ]
         );
+      }
+
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+
+        if (isInsert) {
+           await pool.query(
+             'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+             [req.user.id, 'CREAR', 'SOLICITUDES', fecha, `Creación oferta para solicitud: ${id_solicitud}`]
+           );
+        } else if (datosActuales) {
+           const cambios = {};
+           const normalize = (val) => {
+              if (val instanceof Date) return val.toISOString().split('T')[0];
+              if (val === null || val === undefined) return '';
+              return String(val).trim();
+           };
+           
+           const datosNuevos = {
+             genero_cotizacion: b.genero_cotizacion ? 1 : 0,
+             valor_cotizacion: b.valor_cotizacion,
+             fecha_envio_oferta: b.fecha_envio_oferta,
+             realizo_seguimiento_oferta: b.realizo_seguimiento_oferta ? 1 : 0,
+             observacion_oferta: b.observacion_oferta
+           };
+
+           for (const key in datosNuevos) {
+             const valAnt = normalize(datosActuales[key]);
+             const valNuevo = normalize(datosNuevos[key]);
+             if (valAnt !== valNuevo) {
+               cambios[key] = { anterior: valAnt || '(vacío)', nuevo: valNuevo || '(vacío)' };
+             }
+           }
+
+           if (Object.keys(cambios).length > 0) {
+             await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Actualización oferta para solicitud: ${id_solicitud}`, JSON.stringify(cambios)]
+             );
+           }
+        }
       }
 
       res.json({ ok: true });
@@ -499,6 +638,10 @@ const solicitudesController = {
     const b = req.body || {};
     
     try {
+      // Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM revision_oferta WHERE id_solicitud = ?', [id_solicitud]);
+      const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
+
       const [update] = await pool.query(
         `UPDATE revision_oferta SET fecha_limite_entrega = ?, fecha_envio_resultados = ?, servicio_es_viable = ?
          WHERE id_solicitud = ?`,
@@ -510,7 +653,9 @@ const solicitudesController = {
         ]
       );
       
+      let isInsert = false;
       if (!update.affectedRows) {
+        isInsert = true;
         await pool.query(
           `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, fecha_envio_resultados, servicio_es_viable)
            VALUES (?,?,?,?)`,
@@ -521,6 +666,49 @@ const solicitudesController = {
             b.servicio_es_viable ? 1 : 0
           ]
         );
+      }
+
+      if (req.user && req.user.id) {
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+           timeZone: 'America/Bogota',
+           year: 'numeric', month: '2-digit', day: '2-digit',
+           hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
+         if (isInsert) {
+           await pool.query(
+             'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+             [req.user.id, 'CREAR', 'SOLICITUDES', fecha, `Creación revisión oferta para solicitud: ${id_solicitud}`]
+           );
+         } else if (datosActuales) {
+           const cambios = {};
+           const normalize = (val) => {
+              if (val instanceof Date) return val.toISOString().split('T')[0];
+              if (val === null || val === undefined) return '';
+              return String(val).trim();
+           };
+           
+           const datosNuevos = {
+             fecha_limite_entrega: b.fecha_limite_entrega,
+             fecha_envio_resultados: b.fecha_envio_resultados,
+             servicio_es_viable: b.servicio_es_viable ? 1 : 0
+           };
+
+           for (const key in datosNuevos) {
+             const valAnt = normalize(datosActuales[key]);
+             const valNuevo = normalize(datosNuevos[key]);
+             if (valAnt !== valNuevo) {
+               cambios[key] = { anterior: valAnt || '(vacío)', nuevo: valNuevo || '(vacío)' };
+             }
+           }
+
+           if (Object.keys(cambios).length > 0) {
+             await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Actualización revisión oferta para solicitud: ${id_solicitud}`, JSON.stringify(cambios)]
+             );
+           }
+         }
       }
 
       // Enviar correo al suscriptor de revisión si está suscrito
@@ -666,6 +854,10 @@ const solicitudesController = {
     const b = req.body || {};
     
     try {
+      // Obtener datos actuales
+      const [rowsCurrent] = await pool.query('SELECT * FROM seguimiento_encuesta WHERE id_solicitud = ?', [id_solicitud]);
+      const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
+
       const [update] = await pool.query(
         `UPDATE seguimiento_encuesta SET fecha_encuesta = ?, comentarios = ?, recomendaria_servicio = ?, cliente_respondio = ?, solicito_nueva_encuesta = ?
          WHERE id_solicitud = ?`,
@@ -679,7 +871,9 @@ const solicitudesController = {
         ]
       );
       
+      let isInsert = false;
       if (!update.affectedRows) {
+        isInsert = true;
         await pool.query(
           `INSERT INTO seguimiento_encuesta (id_solicitud, fecha_encuesta, comentarios, recomendaria_servicio, cliente_respondio, solicito_nueva_encuesta)
            VALUES (?,?,?,?,?,?)`,
@@ -692,6 +886,51 @@ const solicitudesController = {
             b.solicito_nueva_encuesta ? 1 : 0
           ]
         );
+      }
+      
+      if (req.user && req.user.id) {
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+           timeZone: 'America/Bogota',
+           year: 'numeric', month: '2-digit', day: '2-digit',
+           hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
+         if (isInsert) {
+           await pool.query(
+             'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+             [req.user.id, 'CREAR', 'SOLICITUDES', fecha, `Creación seguimiento encuesta para solicitud: ${id_solicitud}`]
+           );
+         } else if (datosActuales) {
+           const cambios = {};
+           const normalize = (val) => {
+              if (val instanceof Date) return val.toISOString().split('T')[0];
+              if (val === null || val === undefined) return '';
+              return String(val).trim();
+           };
+           
+           const datosNuevos = {
+             fecha_encuesta: b.fecha_encuesta,
+             comentarios: b.comentarios,
+             recomendaria_servicio: b.recomendaria_servicio ? 1 : 0,
+             cliente_respondio: b.cliente_respondio ? 1 : 0,
+             solicito_nueva_encuesta: b.solicito_nueva_encuesta ? 1 : 0
+           };
+
+           for (const key in datosNuevos) {
+             const valAnt = normalize(datosActuales[key]);
+             const valNuevo = normalize(datosNuevos[key]);
+             if (valAnt !== valNuevo) {
+               cambios[key] = { anterior: valAnt || '(vacío)', nuevo: valNuevo || '(vacío)' };
+             }
+           }
+
+           if (Object.keys(cambios).length > 0) {
+             await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Actualización seguimiento encuesta para solicitud: ${id_solicitud}`, JSON.stringify(cambios)]
+             );
+           }
+         }
       }
       
       res.json({ ok: true });
@@ -718,9 +957,15 @@ const solicitudesController = {
       }
 
       if (req.user && req.user.id) {
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+           timeZone: 'America/Bogota',
+           year: 'numeric', month: '2-digit', day: '2-digit',
+           hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'SOLICITUDES']
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR', 'SOLICITUDES', fecha, `Eliminación de solicitud: ${id}`]
         );
       }
 
@@ -743,6 +988,13 @@ const solicitudesController = {
       await connection.beginTransaction();
 
       try {
+        // Fetch current data for diffs
+        const [rowsCurrent] = await connection.query(
+            'SELECT cliente_respondio_encuesta, solicito_nueva_encuesta FROM Solicitudes WHERE id_solicitud = ?',
+            [body.id_solicitud]
+        );
+        const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
+
         if (body.fecha_encuesta || body.puntuacion_satisfaccion || body.comentarios || body.recomendaria_servicio !== undefined) {
           await connection.query(
             `INSERT INTO ResultadosEncuestas (id_solicitud, fecha_encuesta, puntuacion_satisfaccion, comentarios, recomendaria_servicio)
@@ -779,10 +1031,44 @@ const solicitudesController = {
         }
 
         if (req.user && req.user.id) {
+           const fecha = new Intl.DateTimeFormat('sv-SE', {
+             timeZone: 'America/Bogota',
+             year: 'numeric', month: '2-digit', day: '2-digit',
+             hour: '2-digit', minute: '2-digit', second: '2-digit'
+           }).format(new Date());
+
           await connection.query(
-            'INSERT INTO logs_acciones (usuario_id, accion, modulo) VALUES (?, ?, ?)',
-            [req.user.id, 'CREAR_ENCUESTA', 'SOLICITUDES']
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+            [req.user.id, 'CREAR_ENCUESTA', 'SOLICITUDES', fecha, `Creación resultados encuesta para solicitud: ${body.id_solicitud}`]
           );
+
+          if (datosActuales && updateFields.length > 0) {
+             const cambios = {};
+             const normalize = (val) => {
+                if (val instanceof Date) return val.toISOString().split('T')[0];
+                if (val === null || val === undefined) return '';
+                return String(val).trim();
+             };
+
+             const datosNuevos = {};
+             if (body.cliente_respondio_encuesta !== undefined) datosNuevos.cliente_respondio_encuesta = body.cliente_respondio_encuesta ? 1 : 0;
+             if (body.solicito_nueva_encuesta !== undefined) datosNuevos.solicito_nueva_encuesta = body.solicito_nueva_encuesta ? 1 : 0;
+
+             for (const key in datosNuevos) {
+               const valAnt = normalize(datosActuales[key]);
+               const valNuevo = normalize(datosNuevos[key]);
+               if (valAnt !== valNuevo) {
+                 cambios[key] = { anterior: valAnt || '(vacío)', nuevo: valNuevo || '(vacío)' };
+               }
+             }
+
+             if (Object.keys(cambios).length > 0) {
+                await connection.query(
+                   'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                   [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Actualización estado encuesta solicitud: ${body.id_solicitud}`, JSON.stringify(cambios)]
+                );
+             }
+          }
         }
 
         await connection.commit();

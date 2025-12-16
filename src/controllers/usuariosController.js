@@ -120,19 +120,40 @@ const usuariosController = {
     }
 
     try {
-      const [userCheck] = await pool.query(
-        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+      const [rowsCurrent] = await pool.query(
+        'SELECT id_usuario, estado FROM usuarios WHERE id_usuario = ?',
         [id]
       );
 
-      if (!userCheck.length) {
+      if (!rowsCurrent.length) {
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
+      const datosActuales = rowsCurrent[0];
 
       await pool.query(
         'UPDATE usuarios SET estado = ? WHERE id_usuario = ?',
         [estado, id]
       );
+
+      if (req.user && req.user.id) {
+        const cambios = {};
+        if (datosActuales.estado !== estado) {
+             cambios.estado = { anterior: datosActuales.estado, nuevo: estado };
+        }
+        
+        if (Object.keys(cambios).length > 0) {
+             const fecha = new Intl.DateTimeFormat('sv-SE', {
+                timeZone: 'America/Bogota',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+             }).format(new Date());
+
+             await pool.query(
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de estado usuario: ${id}`, JSON.stringify(cambios)]
+             );
+        }
+      }
 
       res.json({
         message: `Usuario ${estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`
@@ -155,6 +176,19 @@ const usuariosController = {
 
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+
+      if (req.user && req.user.id) {
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'America/Bogota',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
+         await pool.query(
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+            [req.user.id, 'ELIMINAR', 'USUARIOS', fecha, `Eliminación de usuario: ${id}`]
+         );
       }
 
       res.json({ message: 'Usuario eliminado correctamente' });
@@ -204,19 +238,51 @@ const usuariosController = {
 
       // Verificar que el rol existe
       const [roleCheck] = await pool.query(
-        'SELECT id_rol FROM roles WHERE id_rol = ?',
+        'SELECT id_rol, nombre FROM roles WHERE id_rol = ?',
         [rol_id]
       );
 
       if (!roleCheck.length) {
         return res.status(400).json({ message: 'Rol no válido' });
       }
+      const nuevoRolNombre = roleCheck[0].nombre;
+
+      // Obtener datos actuales del usuario para el log
+      const [rowsCurrent] = await pool.query(
+        'SELECT u.id_usuario, u.rol_id, r.nombre as rol_nombre FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id_rol WHERE u.id_usuario = ?',
+        [id]
+      );
+      
+      const datosActuales = rowsCurrent[0];
 
       // Actualizar el rol del usuario
       await pool.query(
         'UPDATE usuarios SET rol_id = ? WHERE id_usuario = ?',
         [rol_id, id]
       );
+
+      if (req.user && req.user.id) {
+          const cambios = {};
+          if (datosActuales.rol_id != rol_id) {
+               cambios.rol = { 
+                 anterior: datosActuales.rol_nombre || datosActuales.rol_id, 
+                 nuevo: nuevoRolNombre || rol_id 
+               };
+          }
+
+          if (Object.keys(cambios).length > 0) {
+               const fecha = new Intl.DateTimeFormat('sv-SE', {
+                  timeZone: 'America/Bogota',
+                  year: 'numeric', month: '2-digit', day: '2-digit',
+                  hour: '2-digit', minute: '2-digit', second: '2-digit'
+               }).format(new Date());
+
+               await pool.query(
+                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+                  [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de rol usuario: ${id}`, JSON.stringify(cambios)]
+               );
+          }
+      }
 
       res.json({
         message: 'Rol actualizado correctamente',
@@ -247,11 +313,30 @@ const usuariosController = {
       if (!userCheck.length) {
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
+      
       const hashed = await bcrypt.hash(contrasena.trim(), SALT_ROUNDS);
+      
       await pool.query(
         'UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?',
         [hashed, id]
       );
+
+      if (req.user && req.user.id) {
+         const cambios = {
+           contrasena: { anterior: '********', nuevo: '********' }
+         };
+
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'America/Bogota',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
+         await pool.query(
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+            [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de contraseña usuario: ${id}`, JSON.stringify(cambios)]
+         );
+      }
       res.json({ message: 'Contraseña actualizada correctamente' });
     } catch (err) {
       console.error('Error PATCH /contrasena/:id:', err);
