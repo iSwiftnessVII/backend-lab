@@ -94,6 +94,9 @@ router.get('/export/excel', reactivosController.exportReactivosExcel);
 // GET /api/reactivos/total
 router.get('/total', reactivosController.getReactivosTotal);
 
+// POST /api/reactivos/consumo - CON AUTENTICACIÓN
+router.post('/consumo', verifyToken, reactivosController.registrarConsumo);
+
 // GET /api/reactivos/:lote
 router.get('/:lote', reactivosController.getReactivoByLote);
 

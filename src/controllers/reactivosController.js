@@ -49,7 +49,7 @@ const reactivosController = {
     if (limit > 500) limit = 500;
     
     try {
-      const baseSelect = 'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion FROM catalogo_reactivos';
+      const baseSelect = 'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga FROM catalogo_reactivos';
       const where = q ? ' WHERE LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ?' : '';
       const order = ' ORDER BY codigo';
       
@@ -88,7 +88,7 @@ const reactivosController = {
   getCatalogoItem: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+      const [rows] = await pool.query('SELECT codigo, nombre, tipo_reactivo, clasificacion_sga FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       res.json(rows[0]);
     } catch (err) {
@@ -99,14 +99,14 @@ const reactivosController = {
 
   // POST /api/reactivos/catalogo
   createCatalogo: async (req, res) => {
-    const { codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion } = req.body || {};
+    const { codigo, nombre, tipo_reactivo, clasificacion_sga } = req.body || {};
     if (!codigo || !nombre || !tipo_reactivo || !clasificacion_sga) {
       return res.status(400).json({ message: 'Faltan campos requeridos' });
     }
     try {
       await pool.query(
-        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion) VALUES (?, ?, ?, ?, ?)',
-        [codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion || null]
+        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga) VALUES (?, ?, ?, ?)',
+        [codigo, nombre, tipo_reactivo, clasificacion_sga]
       );
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -119,7 +119,7 @@ const reactivosController = {
           [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS', fecha]
         );
       }
-      res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion: descripcion || null });
+      res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
         return res.status(409).json({ message: 'Código ya existe en catálogo' });
@@ -132,7 +132,7 @@ const reactivosController = {
   // PUT /api/reactivos/catalogo/:codigo
   updateCatalogo: async (req, res) => {
     const { codigo } = req.params;
-    const { nombre, tipo_reactivo, clasificacion_sga, descripcion } = req.body || {};
+    const { nombre, tipo_reactivo, clasificacion_sga } = req.body || {};
     
     try {
       // 1. Obtener datos actuales
@@ -146,18 +146,16 @@ const reactivosController = {
       const datosNuevos = {
         nombre: nombre !== undefined ? nombre : datosActuales.nombre,
         tipo_reactivo: tipo_reactivo !== undefined ? tipo_reactivo : datosActuales.tipo_reactivo,
-        clasificacion_sga: clasificacion_sga !== undefined ? clasificacion_sga : datosActuales.clasificacion_sga,
-        descripcion: descripcion !== undefined ? descripcion : datosActuales.descripcion
+        clasificacion_sga: clasificacion_sga !== undefined ? clasificacion_sga : datosActuales.clasificacion_sga
       };
 
       // 3. Actualizar
       await pool.query(
-        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ?, descripcion = ? WHERE codigo = ?',
+        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ? WHERE codigo = ?',
         [
           datosNuevos.nombre || null, 
           datosNuevos.tipo_reactivo || null, 
           datosNuevos.clasificacion_sga || null, 
-          datosNuevos.descripcion || null, 
           codigo
         ]
       );
@@ -170,7 +168,7 @@ const reactivosController = {
           return String(val).trim();
         };
 
-        const campos = ['nombre', 'tipo_reactivo', 'clasificacion_sga', 'descripcion'];
+        const campos = ['nombre', 'tipo_reactivo', 'clasificacion_sga'];
         for (const key of campos) {
           const valAnt = normalize(datosActuales[key]);
           const valNuevo = normalize(datosNuevos[key]);
@@ -200,8 +198,7 @@ const reactivosController = {
         codigo, 
         nombre: datosNuevos.nombre || null, 
         tipo_reactivo: datosNuevos.tipo_reactivo || null, 
-        clasificacion_sga: datosNuevos.clasificacion_sga || null, 
-        descripcion: datosNuevos.descripcion || null 
+        clasificacion_sga: datosNuevos.clasificacion_sga || null 
       });
     } catch (err) {
       console.error('Error PUT /catalogo/:codigo:', err);
@@ -634,7 +631,7 @@ deleteCatalogo: async (req, res) => {
       const presentacion_cant = numOrNull(r.presentacion_cant);
       let cantidad_total = r.cantidad_total != null ? numOrNull(r.cantidad_total) : null;
       if (cantidad_total == null && presentacion != null && presentacion_cant != null) {
-        cantidad_total = presentacion * presentacion_cant;
+        cantidad_total = Number((presentacion * presentacion_cant).toFixed(4));
       }
 
       const marca = toNull(r.marca);
@@ -707,7 +704,7 @@ deleteCatalogo: async (req, res) => {
       const presentacion_cant = numOrNull(r.presentacion_cant);
       let cantidad_total = r.cantidad_total != null ? numOrNull(r.cantidad_total) : null;
       if (cantidad_total == null && presentacion != null && presentacion_cant != null) {
-        cantidad_total = presentacion * presentacion_cant;
+        cantidad_total = Number((presentacion * presentacion_cant).toFixed(4));
       }
 
       const marca = toNull(r.marca);
@@ -844,6 +841,84 @@ deleteCatalogo: async (req, res) => {
     } catch (err) {
         console.error('Error DELETE /:lote (reactivos):', err);
         res.status(500).json({ message: 'Error eliminando reactivo' });
+    }
+  },
+
+  // POST /api/reactivos/consumo
+  registrarConsumo: async (req, res) => {
+    const { lote, cantidad, usuario, uso } = req.body;
+    
+    // Validación básica
+    if (!lote || !cantidad || cantidad <= 0 || !uso) {
+      return res.status(400).json({ message: 'Lote, cantidad positiva y uso son requeridos' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // Verificar existencia y cantidad actual
+      const [rows] = await connection.query('SELECT cantidad_total FROM reactivos WHERE lote = ? FOR UPDATE', [lote]);
+      if (rows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Reactivo no encontrado' });
+      }
+
+      const currentCant = parseFloat(rows[0].cantidad_total || 0);
+      const consumeCant = parseFloat(cantidad);
+
+      if (currentCant < consumeCant) {
+        await connection.rollback();
+        return res.status(400).json({ 
+          message: `Cantidad insuficiente. Disponible: ${currentCant}, Solicitado: ${consumeCant}` 
+        });
+      }
+
+      // Determinar nombre de usuario
+      let userName = usuario;
+      if (!userName && req.user) {
+        userName = req.user.nombre || req.user.email || 'Usuario sistema';
+      }
+      if (!userName) userName = 'Anónimo';
+
+      // Insertar en consumo_reactivos
+      await connection.query(
+        'INSERT INTO consumo_reactivos (lote, cantidad, usuario, uso) VALUES (?, ?, ?, ?)',
+        [lote, consumeCant, userName, uso || null]
+      );
+
+      // Actualizar reactivos
+      await connection.query(
+        'UPDATE reactivos SET cantidad_total = cantidad_total - ? WHERE lote = ?',
+        [consumeCant, lote]
+      );
+
+      // Logs
+      if (req.user && req.user.id) {
+         // Log de acción
+         await connection.query(
+           'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+           [req.user.id, 'CONSUMO', 'REACTIVOS', `Consumo de ${consumeCant} del lote ${lote}. Uso: ${uso}`]
+         );
+         
+         // Movimiento de inventario (Salida)
+         // Nota: Asumiendo que movimientos_inventario no tiene columna cantidad basado en createReactivo, 
+         // pero registramos el evento.
+         await connection.query(
+             'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
+             ['REACTIVO', lote, req.user.id, 'SALIDA']
+         );
+      }
+
+      await connection.commit();
+      res.json({ message: 'Consumo registrado exitosamente', nuevo_saldo: Number((currentCant - consumeCant).toFixed(4)) });
+
+    } catch (err) {
+      await connection.rollback();
+      console.error('Error registrarConsumo:', err);
+      res.status(500).json({ message: 'Error registrando consumo' });
+    } finally {
+      connection.release();
     }
   },
 
