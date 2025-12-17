@@ -301,7 +301,6 @@ const solicitudesController = {
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.fecha_envio_resultados,
            r.servicio_es_viable,
            e.fecha_encuesta,
            e.comentarios,
@@ -353,7 +352,6 @@ const solicitudesController = {
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.fecha_envio_resultados,
            r.servicio_es_viable,
            e.fecha_encuesta,
            e.comentarios,
@@ -643,11 +641,10 @@ const solicitudesController = {
       const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
 
       const [update] = await pool.query(
-        `UPDATE revision_oferta SET fecha_limite_entrega = ?, fecha_envio_resultados = ?, servicio_es_viable = ?
+        `UPDATE revision_oferta SET fecha_limite_entrega = ?, servicio_es_viable = ?
          WHERE id_solicitud = ?`,
         [
           b.fecha_limite_entrega || null,
-          b.fecha_envio_resultados || null,
           b.servicio_es_viable ? 1 : 0,
           id_solicitud
         ]
@@ -657,12 +654,11 @@ const solicitudesController = {
       if (!update.affectedRows) {
         isInsert = true;
         await pool.query(
-          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, fecha_envio_resultados, servicio_es_viable)
-           VALUES (?,?,?,?)`,
+          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, servicio_es_viable)
+           VALUES (?,?,?)`,
           [
             id_solicitud,
             b.fecha_limite_entrega || null,
-            b.fecha_envio_resultados || null,
             b.servicio_es_viable ? 1 : 0
           ]
         );
@@ -690,7 +686,6 @@ const solicitudesController = {
            
            const datosNuevos = {
              fecha_limite_entrega: b.fecha_limite_entrega,
-             fecha_envio_resultados: b.fecha_envio_resultados,
              servicio_es_viable: b.servicio_es_viable ? 1 : 0
            };
 
@@ -747,7 +742,6 @@ const solicitudesController = {
               `Muestra: ${s.nombre_muestra || 'N/A'}\n` +
               `Tipo: ${s.tipo_solicitud || 'N/A'}\n\n` +
               `Fecha límite de entrega: ${b.fecha_limite_entrega || 'N/A'}\n` +
-              `Fecha de envío de resultados: ${b.fecha_envio_resultados || 'N/A'}\n` +
               `Servicio es viable: ${b.servicio_es_viable ? 'Sí' : 'No'}`;
             const html =
               `<h3>Revisión de la oferta</h3>` +
@@ -757,7 +751,6 @@ const solicitudesController = {
               `<p><strong>Tipo:</strong> ${s.tipo_solicitud || 'N/A'}</p>` +
               `<hr/>` +
               `<p><strong>Fecha límite de entrega:</strong> ${b.fecha_limite_entrega || 'N/A'}</p>` +
-              `<p><strong>Fecha de envío de resultados:</strong> ${b.fecha_envio_resultados || 'N/A'}</p>` +
               `<p><strong>Servicio es viable:</strong> ${b.servicio_es_viable ? 'Sí' : 'No'}</p>`;
             await sendMail(toEmail, subject, text, html);
           }

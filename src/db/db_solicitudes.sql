@@ -84,7 +84,6 @@ CREATE TABLE revision_oferta (
     id_revision INT AUTO_INCREMENT PRIMARY KEY,
     id_solicitud INT,
     fecha_limite_entrega DATE,
-    fecha_envio_resultados DATE,
     servicio_es_viable BOOLEAN,
 
     FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
