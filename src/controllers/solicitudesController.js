@@ -450,6 +450,85 @@ const solicitudesController = {
         );
       }
 
+      // Notificar suscriptores de solicitudes
+      try {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+            email VARCHAR(255) PRIMARY KEY,
+            activo TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        const [subs] = await pool.query('SELECT email FROM suscripciones_solicitudes WHERE activo = 1');
+        if (subs.length > 0) {
+          const id = b.solicitud_id || result.insertId;
+          const tipo = b.tipo_solicitud || 'N/A';
+          const nombre = b.nombre_muestra || 'N/A';
+          
+          let previewCode = 'N/A';
+          try {
+            const fechaSol = b.fecha_solicitud ? new Date(b.fecha_solicitud) : new Date();
+            const year = fechaSol.getFullYear();
+            if (tipo !== 'N/A') {
+                const [countResult] = await pool.query(
+                    'SELECT COUNT(*) as count FROM Solicitudes WHERE tipo_solicitud = ? AND YEAR(fecha_solicitud) = ? AND solicitud_id <= ?',
+                    [tipo, year, id]
+                );
+                const consecutive = countResult[0]?.count || 0;
+                previewCode = `${tipo}-${year}-${String(consecutive).padStart(2, '0')}`;
+            }
+          } catch (codeErr) {
+            console.warn('Error calculating preview code:', codeErr);
+          }
+
+          let clienteNombre = 'N/A';
+          let clienteCedula = 'N/A';
+          if (b.id_cliente) {
+             try {
+               const [cliRows] = await pool.query('SELECT nombre_solicitante, numero_identificacion FROM clientes WHERE id_cliente = ?', [b.id_cliente]);
+               if (cliRows.length > 0) {
+                 clienteNombre = cliRows[0].nombre_solicitante || 'N/A';
+                 clienteCedula = cliRows[0].numero_identificacion || 'N/A';
+               }
+             } catch (cliErr) {
+               console.warn('Error fetching client details for email:', cliErr);
+             }
+          }
+
+          const subject = `Solicitud Registrada: ${previewCode} - ${id} - ${nombre}`;
+          
+          let bodyHtml = `<h2>Nueva Solicitud Registrada</h2>`;
+          bodyHtml += `<ul>`;
+          bodyHtml += `<li><strong>Código:</strong> ${previewCode}</li>`;
+          bodyHtml += `<li><strong>ID:</strong> ${id}</li>`;
+          bodyHtml += `<li><strong>Tipo:</strong> ${tipo}</li>`;
+          bodyHtml += `<li><strong>Nombre Cliente:</strong> ${clienteNombre}</li>`;
+          bodyHtml += `<li><strong>Cédula/NIT:</strong> ${clienteCedula}</li>`;
+          bodyHtml += `<li><strong>Cliente ID:</strong> ${b.id_cliente}</li>`;
+          bodyHtml += `<li><strong>Nombre Muestra:</strong> ${nombre}</li>`;
+          bodyHtml += `<li><strong>Fecha Solicitud:</strong> ${b.fecha_solicitud || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Lote:</strong> ${b.lote_producto || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Vencimiento Muestra:</strong> ${b.fecha_vencimiento_muestra || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Tipo Muestra:</strong> ${b.tipo_muestra || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Tipo Empaque:</strong> ${b.tipo_empaque || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Análisis Requerido:</strong> ${b.analisis_requerido || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Requiere Análisis:</strong> ${b.req_analisis ? 'Sí' : 'No'}</li>`;
+          bodyHtml += `<li><strong>Cant. Muestras:</strong> ${b.cant_muestras || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Entrega Estimada:</strong> ${b.fecha_entrega_muestra || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Recibe:</strong> ${b.recibe_personal || 'N/A'}</li>`;
+          bodyHtml += `<li><strong>Observaciones:</strong> ${b.observaciones || 'N/A'}</li>`;
+          bodyHtml += `</ul>`;
+
+          const text = `Nueva Solicitud Registrada:\nCódigo: ${previewCode}\nID: ${id}\nTipo: ${tipo}\nNombre: ${nombre}\n... (Ver HTML para más detalles)`;
+
+          for (const sub of subs) {
+            await sendMail(sub.email, subject, text, bodyHtml);
+          }
+        }
+      } catch (notifyErr) {
+        console.warn('Error notificando suscriptores de solicitudes:', notifyErr);
+      }
+
       res.status(201).json({ solicitud_id: result.insertId });
     } catch (err) {
       console.error('POST /solicitudes error', err);
@@ -733,10 +812,31 @@ const solicitudesController = {
               [id_solicitud]
             );
             const s = rows && rows[0] ? rows[0] : {};
+            
+            let previewCode = 'N/A';
+            try {
+                const tipo = s.tipo_solicitud || 'N/A';
+                const fechaSol = s.fecha_solicitud ? new Date(s.fecha_solicitud) : new Date();
+                const year = fechaSol.getFullYear();
+                const id = s.solicitud_id || id_solicitud;
+
+                if (tipo !== 'N/A' && id) {
+                    const [countResult] = await pool.query(
+                        'SELECT COUNT(*) as count FROM Solicitudes WHERE tipo_solicitud = ? AND YEAR(fecha_solicitud) = ? AND solicitud_id <= ?',
+                        [tipo, year, id]
+                    );
+                    const consecutive = countResult[0]?.count || 0;
+                    previewCode = `${tipo}-${year}-${String(consecutive).padStart(2, '0')}`;
+                }
+            } catch (codeErr) {
+                console.warn('Error calculating preview code for revision:', codeErr);
+            }
+
             const viable = b.servicio_es_viable ? 'viable' : 'no viable';
-            const subject = `Revisión de la oferta: Servicio ${viable}`;
+            const subject = `Revisión de Oferta: ${previewCode} - ${s.nombre_muestra || 'N/A'} - Servicio ${viable}`;
             const text =
               `Se ha guardado la revisión de la oferta.\n\n` +
+              `Código: ${previewCode}\n` +
               `Solicitud: ${s.solicitud_id || id_solicitud}\n` +
               `Solicitante: ${s.nombre_solicitante || 'N/A'}\n` +
               `Muestra: ${s.nombre_muestra || 'N/A'}\n` +
@@ -745,6 +845,7 @@ const solicitudesController = {
               `Servicio es viable: ${b.servicio_es_viable ? 'Sí' : 'No'}`;
             const html =
               `<h3>Revisión de la oferta</h3>` +
+              `<p><strong>Código:</strong> ${previewCode}</p>` +
               `<p><strong>Solicitud:</strong> ${s.solicitud_id || id_solicitud}</p>` +
               `<p><strong>Solicitante:</strong> ${s.nombre_solicitante || 'N/A'}</p>` +
               `<p><strong>Muestra:</strong> ${s.nombre_muestra || 'N/A'}</p>` +
@@ -766,6 +867,80 @@ const solicitudesController = {
     }
   },
   
+  suscribirseSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(
+        `INSERT INTO suscripciones_solicitudes (email, activo) VALUES (?, 1)
+         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
+        [email]
+      );
+      const text = `Te has suscrito a notificaciones de nuevas solicitudes.\n\nRecibirás correos cuando se registre una nueva solicitud.`;
+      const html = `<p>Te has suscrito a notificaciones de <strong>nuevas solicitudes</strong>.</p><p>Recibirás correos cuando se registre una nueva solicitud.</p>`;
+      await sendMail(email, 'Suscripción a solicitudes confirmada', text, html);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Error suscribirseSolicitudes:', err);
+      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
+    }
+  },
+  
+  obtenerEstadoSuscripcionSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const [rows] = await pool.query('SELECT activo FROM suscripciones_solicitudes WHERE email = ?', [email]);
+      if (!rows.length) return res.json({ suscrito: false });
+      return res.json({ suscrito: !!rows[0].activo });
+    } catch (err) {
+      console.error('Error obtenerEstadoSuscripcionSolicitudes:', err);
+      return res.status(500).json({ error: 'Error consultando suscripción' });
+    }
+  },
+  
+  cancelarSuscripcionSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+          email VARCHAR(255) PRIMARY KEY,
+          activo TINYINT(1) NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const [result] = await pool.query('UPDATE suscripciones_solicitudes SET activo = 0 WHERE email = ?', [email]);
+      return res.json({ ok: true, updated: result.affectedRows });
+    } catch (err) {
+      console.error('Error cancelarSuscripcionSolicitudes:', err);
+      return res.status(500).json({ error: 'Error cancelando suscripción de solicitudes' });
+    }
+  },
+
   suscribirseRevisionOferta: async (req, res) => {
     try {
       const email = String((req.body || {}).email || '').trim().toLowerCase();

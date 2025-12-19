@@ -93,6 +93,20 @@ const usuariosController = {
         [email.toLowerCase().trim(), hashedPassword, rol_id, 'ACTIVO']
       );
 
+      // Log auditoría
+      if (req.user && req.user.id) {
+         const fecha = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'America/Bogota',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+         }).format(new Date());
+
+         await pool.query(
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
+            [req.user.id, 'CREAR', 'USUARIOS', fecha, `Creación de usuario: ${email.toLowerCase().trim()}`, JSON.stringify({ rol_id, estado: 'ACTIVO' })]
+         );
+      }
+
       res.status(201).json({
         message: 'Usuario creado correctamente',
         id_usuario: result.insertId,

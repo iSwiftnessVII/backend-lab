@@ -36,10 +36,15 @@ router.put('/oferta/:id_solicitud', verifyToken, solicitudesController.createOrU
 router.post('/revision', verifyToken, solicitudesController.createOrUpdateRevision);
 router.put('/revision/:id_solicitud', verifyToken, solicitudesController.createOrUpdateRevision);
 
+// Suscripciones para nuevas solicitudes
+router.post('/suscripciones-solicitudes', verifyToken, solicitudesController.suscribirseSolicitudes);
+router.get('/suscripciones-solicitudes/:email', verifyToken, solicitudesController.obtenerEstadoSuscripcionSolicitudes);
+router.delete('/suscripciones-solicitudes/:email', verifyToken, solicitudesController.cancelarSuscripcionSolicitudes);
+
 // Suscripciones para revisión de oferta
-router.post('/suscripciones-revision', solicitudesController.suscribirseRevisionOferta);
-router.get('/suscripciones-revision/:email', solicitudesController.obtenerEstadoSuscripcionRevisionOferta);
-router.delete('/suscripciones-revision/:email', solicitudesController.cancelarSuscripcionRevisionOferta);
+router.post('/suscripciones-revision', verifyToken, solicitudesController.suscribirseRevisionOferta);
+router.get('/suscripciones-revision/:email', verifyToken, solicitudesController.obtenerEstadoSuscripcionRevisionOferta);
+router.delete('/suscripciones-revision/:email', verifyToken, solicitudesController.cancelarSuscripcionRevisionOferta);
 
 // ---------- SEGUIMIENTO ENCUESTA ----------
 router.post('/seguimiento-encuesta', verifyToken, solicitudesController.createOrUpdateSeguimientoEncuesta);

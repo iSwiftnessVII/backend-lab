@@ -13,7 +13,7 @@ CREATE TABLE catalogo_papeleria (
 -- =====================================
 CREATE TABLE papeleria (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    item_catalogo INT NOT NULL,  -- ahora referencia al catálogo
+    item_catalogo INT,  -- ahora referencia al catálogo (Opcional)
     nombre VARCHAR(100) NOT NULL,
     cantidad_adquirida INT NOT NULL,
     cantidad_existente INT NOT NULL,
@@ -23,6 +23,7 @@ CREATE TABLE papeleria (
     fecha_adquisicion DATE,
     ubicacion VARCHAR(100),
     observaciones TEXT,
+    imagen MEDIUMBLOB,
 
     FOREIGN KEY (item_catalogo) REFERENCES catalogo_papeleria(item)
 );

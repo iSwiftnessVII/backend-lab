@@ -4,480 +4,272 @@ function likeParam(q) {
   return `%${(q || '').toLowerCase()}%`;
 }
 
+function trimStr(v) {
+  return typeof v === 'string' ? v.trim() : v;
+}
+
+function toNull(v) {
+  const t = trimStr(v);
+  return t === '' || t === undefined ? null : t;
+}
+
+function intOrNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function validPresentacion(v) {
+  const s = String(v || '').trim();
+  return s === 'unidad' || s === 'paquete' || s === 'caja' || s === 'cajas' ? s : null;
+}
+
+function detectImageMimeType(buffer) {
+  if (!buffer || buffer.length < 4) return 'application/octet-stream';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return 'application/octet-stream';
+}
+
+function attachImagenUrl(rows) {
+  return (rows || []).map((r) => {
+    const tiene = Number(r?.tiene_imagen) === 1 || r?.tiene_imagen === true;
+    return {
+      ...r,
+      imagen_url: tiene && r?.id ? `/api/papeleria/${r.id}/imagen` : null
+    };
+  });
+}
+
 const papeleriaController = {
-  // ===== Catálogo de papelería =====
-  async getCatalogo(req, res) {
+  getPapeleria: async (req, res) => {
     const q = (req.query.q || '').trim();
     let limit = parseInt(req.query.limit, 10);
     let offset = parseInt(req.query.offset, 10);
     if (isNaN(limit) || limit <= 0) limit = 0;
     if (isNaN(offset) || offset < 0) offset = 0;
-    if (limit > 500) limit = 500;
+    if (limit > 5000) limit = 5000;
+
     try {
-      const baseSelect = 'SELECT item, nombre, descripcion FROM catalogo_papeleria';
-      const where = q ? ' WHERE CAST(item AS CHAR) LIKE ? OR LOWER(nombre) LIKE ?' : '';
-      const order = ' ORDER BY item DESC';
+      const select =
+        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones, (imagen IS NOT NULL) AS tiene_imagen FROM papeleria';
+      const where = q
+        ? ' WHERE LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ? OR LOWER(ubicacion) LIKE ? OR LOWER(descripcion) LIKE ? OR LOWER(observaciones) LIKE ?'
+        : '';
+      const order = ' ORDER BY id DESC';
+
       if (limit > 0) {
-        const countQuery = `SELECT COUNT(*) as total FROM catalogo_papeleria${where}`;
+        const countQuery = `SELECT COUNT(*) as total FROM papeleria${q ? ' WHERE LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ? OR LOWER(ubicacion) LIKE ? OR LOWER(descripcion) LIKE ? OR LOWER(observaciones) LIKE ?' : ''}`;
         let totalRows;
-        if (q) { [totalRows] = await pool.query(countQuery, [likeParam(q), likeParam(q)]); }
-        else { [totalRows] = await pool.query(countQuery); }
+        if (q) {
+          const p = likeParam(q);
+          [totalRows] = await pool.query(countQuery, [p, p, p, p, p]);
+        } else {
+          [totalRows] = await pool.query(countQuery);
+        }
         const total = totalRows[0]?.total || 0;
         let rows;
         if (q) {
-          [rows] = await pool.query(`${baseSelect}${where}${order} LIMIT ? OFFSET ?`, [likeParam(q), likeParam(q), limit, offset]);
+          const p = likeParam(q);
+          [rows] = await pool.query(`${select}${where}${order} LIMIT ? OFFSET ?`, [p, p, p, p, p, limit, offset]);
         } else {
-          [rows] = await pool.query(`${baseSelect}${order} LIMIT ? OFFSET ?`, [limit, offset]);
+          [rows] = await pool.query(`${select}${order} LIMIT ? OFFSET ?`, [limit, offset]);
         }
-        return res.json({ rows, total });
+        return res.json({ rows: attachImagenUrl(rows), total });
+      }
+
+      let rows;
+      if (q) {
+        const p = likeParam(q);
+        [rows] = await pool.query(`${select}${where}${order}`, [p, p, p, p, p]);
       } else {
-        let rows;
-        if (q) {
-          [rows] = await pool.query(`${baseSelect}${where}${order}`, [likeParam(q), likeParam(q)]);
-        } else {
-          [rows] = await pool.query(`${baseSelect}${order}`);
-        }
-        return res.json(rows);
+        [rows] = await pool.query(`${select}${order}`);
       }
+      return res.json(attachImagenUrl(rows));
     } catch (err) {
-      console.error('papeleria getCatalogo', err);
-      res.status(500).json({ message: 'Error buscando catálogo' });
-    }
-  },
-
-  async getCatalogoItem(req, res) {
-    const { item } = req.params;
-    try {
-      const [rows] = await pool.query('SELECT item, nombre, descripcion FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
-      if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
-      res.json(rows[0]);
-    } catch (err) { console.error(err); res.status(500).json({ message: 'Error' }); }
-  },
-
-  async getCatalogoItemImagen(req, res) {
-    const { item } = req.params;
-    try {
-      const [rows] = await pool.query('SELECT imagen FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
-      if (!rows.length) return res.status(404).send('No encontrado');
-      const img = rows[0]?.imagen;
-      if (!img) return res.status(204).end();
-      res.setHeader('Content-Type', 'image/jpeg');
-      res.send(img);
-    } catch (err) { console.error(err); res.status(500).send('Error obteniendo imagen'); }
-  },
-
-  async createCatalogo(req, res) {
-    const { item, nombre, descripcion } = req.body || {};
-    const imagenBuffer = req.file?.buffer || null;
-    if (!item || !nombre) return res.status(400).json({ message: 'Item y nombre son requeridos' });
-    const itemNum = parseInt(item, 10);
-    if (Number.isNaN(itemNum)) return res.status(400).json({ message: 'El item debe ser numérico' });
-    try {
-      await pool.query('INSERT INTO catalogo_papeleria (item, nombre, descripcion, imagen) VALUES (?, ?, ?, ?)', [itemNum, nombre, descripcion || null, imagenBuffer]);
-      
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-          [req.user.id, 'CREAR', 'CATALOGO_PAPELERIA', fecha]
-        );
-      }
-
-      res.status(201).json({ item: itemNum, nombre, descripcion: descripcion || null });
-    } catch (err) {
-      if (err && (err.code === 'ER_DATA_TOO_LONG' || err.errno === 1406)) {
-        return res.status(413).json({ message: 'Imagen demasiado grande para la columna. Usa MEDIUMBLOB o <5MB.' });
-      }
-      if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'El item ya existe en catálogo' });
-      console.error(err); res.status(500).json({ message: 'Error creando catálogo' });
-    }
-  },
-
-  async deleteCatalogo(req, res) {
-    const { item } = req.params;
-    try {
-      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-        return res.status(403).json({ message: 'No tienes permisos para eliminar. Solo administradores.' });
-      }
-      // Pre-check con equivalencia numérica
-      const [existRows] = await pool.query('SELECT COUNT(*) AS cnt FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
-      const exists = (existRows && existRows[0] && Number(existRows[0].cnt)) || 0;
-      console.log('[PRECHECK DELETE catalogo_papeleria] item =', item, 'exists =', exists);
-      if (!exists) return res.status(404).json({ message: `No encontrado en catálogo (item: ${item})` });
-
-      // Borrar por equivalencia numérica
-      const [result] = await pool.query('DELETE FROM catalogo_papeleria WHERE CAST(item AS UNSIGNED) = CAST(? AS UNSIGNED)', [item]);
-      console.log('[DELETE catalogo_papeleria] item =', item, 'affectedRows =', result.affectedRows);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'CATALOGO_PAPELERIA', fecha]
-        );
-      }
-
-      res.json({ deleted: result.affectedRows, message: 'Item de catálogo eliminado correctamente' });
-    } catch (err) {
-      if (err && (err.code === 'ER_ROW_IS_REFERENCED_2' || err.code === 'ER_ROW_IS_REFERENCED' || err.errno === 1451)) {
-        return res.status(409).json({ message: 'No se puede eliminar: existen registros de papelería que usan este item de catálogo.' });
-      }
-      console.error('Error DELETE /catalogo/:item (papeleria):', err);
-      res.status(500).json({ message: 'Error eliminando item de catálogo' });
-    }
-  },
-
-  // ===== Inventario de papelería (CRUD) =====
-  // GET /api/papeleria?q=&limit=
-  async getPapeleria(req, res) {
-    const q = (req.query.q || '').trim().toLowerCase();
-    let limit = parseInt(req.query.limit, 10);
-    if (isNaN(limit) || limit <= 0) limit = 0;
-    if (limit > 500) limit = 500;
-    try {
-      if (!q) {
-        if (limit > 0) {
-          const [rows] = await pool.query('SELECT * FROM papeleria ORDER BY id DESC LIMIT ?', [limit]);
-          return res.json(rows);
-        } else {
-          const [rows] = await pool.query('SELECT * FROM papeleria ORDER BY id DESC');
-          return res.json(rows);
-        }
-      }
-
-      const searchQuery = `
-        SELECT * FROM papeleria
-        WHERE CAST(item_catalogo AS CHAR) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?
-        ORDER BY id DESC
-      `;
-
-      if (limit > 0) {
-        const [rows] = await pool.query(
-          `${searchQuery} LIMIT ?`,
-          [likeParam(q), likeParam(q), likeParam(q), limit]
-        );
-        return res.json(rows);
-      } else {
-        const [rows] = await pool.query(searchQuery, [likeParam(q), likeParam(q), likeParam(q)]);
-        return res.json(rows);
-      }
-    } catch (err) {
-      console.error('Error GET / (papeleria):', err);
+      console.error('Error GET /api/papeleria:', err);
       res.status(500).json({ message: 'Error listando papelería' });
     }
   },
 
-  // GET /api/papeleria/:id
-  async getPapeleriaById(req, res) {
-    const { id } = req.params;
+  getPapeleriaImagen: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
+
     try {
-      const [rows] = await pool.query('SELECT * FROM papeleria WHERE id = ?', [id]);
+      const [rows] = await pool.query('SELECT imagen FROM papeleria WHERE id = ?', [id]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
-      res.json(rows[0]);
+      const img = rows[0]?.imagen || null;
+      if (!img || img.length === 0) return res.status(404).json({ message: 'Sin imagen' });
+
+      const buf = Buffer.isBuffer(img) ? img : Buffer.from(img);
+      res.setHeader('Content-Type', detectImageMimeType(buf));
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.send(buf);
     } catch (err) {
-      console.error('Error GET /:id (papeleria):', err);
+      console.error('Error GET /api/papeleria/:id/imagen:', err);
+      return res.status(500).json({ message: 'Error obteniendo imagen' });
+    }
+  },
+
+  getPapeleriaById: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
+
+    try {
+      const [rows] = await pool.query(
+        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones, (imagen IS NOT NULL) AS tiene_imagen FROM papeleria WHERE id = ?',
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
+      const r = rows[0];
+      res.json({
+        ...r,
+        imagen_url: (Number(r?.tiene_imagen) === 1 || r?.tiene_imagen === true) ? `/api/papeleria/${r.id}/imagen` : null
+      });
+    } catch (err) {
+      console.error('Error GET /api/papeleria/:id:', err);
       res.status(500).json({ message: 'Error obteniendo papelería' });
     }
   },
 
-  // POST /api/papeleria
-  async createPapeleria(req, res) {
-    const {
-      item_catalogo,
-      nombre,
-      cantidad_adquirida,
-      cantidad_existente,
-      presentacion,
-      marca,
-      descripcion,
-      fecha_adquisicion,
-      ubicacion,
-      observaciones
-    } = req.body || {};
+  createPapeleria: async (req, res) => {
+    const body = req.body || {};
+    const nombre = toNull(body.nombre);
+    const cantidad_adquirida = intOrNull(body.cantidad_adquirida);
+    const cantidad_existente = intOrNull(body.cantidad_existente);
+    const presentacion = validPresentacion(body.presentacion);
+    const marca = toNull(body.marca);
+    const descripcion = toNull(body.descripcion);
+    const fecha_adquisicion = toNull(body.fecha_adquisicion);
+    const ubicacion = toNull(body.ubicacion);
+    const observaciones = toNull(body.observaciones);
+    const imagen = req.file?.buffer || null;
 
-    if (!item_catalogo || !nombre || cantidad_adquirida == null || cantidad_existente == null) {
-      return res.status(400).json({
-        message: 'Faltan campos requeridos: item_catalogo, nombre, cantidad_adquirida, cantidad_existente'
-      });
+    if (!nombre || cantidad_adquirida === null || cantidad_existente === null || !presentacion) {
+      return res.status(400).json({ message: 'Faltan campos requeridos' });
     }
 
     try {
       const [result] = await pool.query(
-        `INSERT INTO papeleria (
-          item_catalogo, nombre, cantidad_adquirida, cantidad_existente,
-          presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        'INSERT INTO papeleria (nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, descripcion, fecha_adquisicion, ubicacion, observaciones, imagen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
-          item_catalogo,
           nombre,
           cantidad_adquirida,
           cantidad_existente,
-          presentacion || null,
-          marca || null,
-          descripcion || null,
-          fecha_adquisicion || null,
-          ubicacion || null,
-          observaciones || null
+          presentacion,
+          marca,
+          descripcion,
+          fecha_adquisicion,
+          ubicacion,
+          observaciones,
+          imagen
         ]
       );
-
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-          [req.user.id, 'CREAR', 'PAPELERIA', fecha]
-        );
-
-        // REGISTRO DE MOVIMIENTO
-        await pool.query(
-          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, ?)',
-          ['PAPELERIA', result.insertId.toString(), req.user.id, 'ENTRADA', fecha]
-        );
-      }
-
-      res.status(201).json({ message: 'Papelería creada correctamente' });
+      res.status(201).json({ id: result.insertId, message: 'Papelería creada' });
     } catch (err) {
-      if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.errno === 1452) {
-        return res.status(400).json({ message: 'El item de catálogo especificado no existe.' });
-      }
-      if (err.code === 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD') {
-        return res.status(400).json({ message: 'Valor inválido para uno de los campos (posiblemente Enum).' });
-      }
-      console.error('Error POST / (papeleria):', err);
-      res.status(500).json({ message: 'Error creando papelería', error: err.message });
+      console.error('Error POST /api/papeleria:', err);
+      res.status(500).json({ message: 'Error creando papelería' });
     }
   },
 
-  // PUT /api/papeleria/:id
-  async updatePapeleria(req, res) {
-    const { id } = req.params;
-    const {
-      item_catalogo,
-      nombre,
-      cantidad_adquirida,
-      cantidad_existente,
-      presentacion,
-      marca,
-      descripcion,
-      fecha_adquisicion,
-      ubicacion,
-      observaciones
-    } = req.body || {};
+  updatePapeleria: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
 
-    try {
-      // 1. Obtener datos actuales para comparar
-      const [rows] = await pool.query('SELECT * FROM papeleria WHERE id = ?', [id]);
-      if (rows.length === 0) {
-        return res.status(404).json({ message: 'No encontrado' });
-      }
-      const datosActuales = rows[0];
+    const body = req.body || {};
+    const nombre = toNull(body.nombre);
+    const cantidad_adquirida = intOrNull(body.cantidad_adquirida);
+    const cantidad_existente = intOrNull(body.cantidad_existente);
+    const presentacion = validPresentacion(body.presentacion);
+    const marca = toNull(body.marca);
+    const descripcion = toNull(body.descripcion);
+    const fecha_adquisicion = toNull(body.fecha_adquisicion);
+    const ubicacion = toNull(body.ubicacion);
+    const observaciones = toNull(body.observaciones);
+    const imagen = req.file?.buffer || null;
 
-      // 2. Preparar nuevos datos
-      const datosNuevos = {
-        item_catalogo,
-        nombre,
-        cantidad_adquirida,
-        cantidad_existente,
-        presentacion: presentacion || null,
-        marca: marca || null,
-        descripcion: descripcion || null,
-        fecha_adquisicion: fecha_adquisicion || null,
-        ubicacion: ubicacion || null,
-        observaciones: observaciones || null
-      };
-
-      // 3. Ejecutar Update
-      await pool.query(
-        `UPDATE papeleria SET
-          item_catalogo = ?, nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?,
-          presentacion = ?, marca = ?, descripcion = ?, fecha_adquisicion = ?, ubicacion = ?, observaciones = ?
-        WHERE id = ?`,
-        [
-          datosNuevos.item_catalogo,
-          datosNuevos.nombre,
-          datosNuevos.cantidad_adquirida,
-          datosNuevos.cantidad_existente,
-          datosNuevos.presentacion,
-          datosNuevos.marca,
-          datosNuevos.descripcion,
-          datosNuevos.fecha_adquisicion,
-          datosNuevos.ubicacion,
-          datosNuevos.observaciones,
-          id
-        ]
-      );
-
-      // 4. Calcular diferencias para el log
-      let detallesCambios = null;
-      const cambios = {};
-      
-      const normalize = (val) => {
-        if (val instanceof Date) return val.toISOString().split('T')[0]; // YYYY-MM-DD
-        if (val === null || val === undefined) return '';
-        return String(val).trim();
-      };
-
-      for (const key in datosNuevos) {
-        if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
-          const valAnt = normalize(datosActuales[key]);
-          const valNuevo = normalize(datosNuevos[key]);
-          
-          if (valAnt !== valNuevo) {
-            cambios[key] = {
-              anterior: valAnt || '(vacío)',
-              nuevo: valNuevo || '(vacío)'
-            };
-          }
-        }
-      }
-
-      // Enriquecer IDs con nombres
-      if (cambios.item_catalogo) {
-        const oldId = datosActuales.item_catalogo;
-        const newId = datosNuevos.item_catalogo;
-        const ids = [oldId, newId].filter(id => id != null);
-        
-        if (ids.length > 0) {
-            try {
-                const [rows] = await pool.query('SELECT item, nombre FROM catalogo_papeleria WHERE item IN (?)', [ids]);
-                const nameMap = {};
-                rows.forEach(r => nameMap[r.item] = r.nombre);
-
-                cambios['item_catalogo'] = {
-                    anterior: (oldId ? (nameMap[oldId] || oldId) : '(vacío)'),
-                    nuevo: (newId ? (nameMap[newId] || newId) : '(vacío)')
-                };
-            } catch (errName) {
-                console.error('Error obteniendo nombres para log papeleria:', errName);
-            }
-        }
-      }
-
-      if (Object.keys(cambios).length > 0) {
-        detallesCambios = JSON.stringify(cambios);
-      }
-
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
-
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, detalle) VALUES (?, ?, ?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'PAPELERIA', fecha, detallesCambios]
-        );
-      }
-
-      res.json({ message: 'Papelería actualizada correctamente' });
-    } catch (err) {
-      if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.errno === 1452) {
-        return res.status(400).json({ message: 'El item de catálogo especificado no existe.' });
-      }
-      console.error('Error PUT /:id (papeleria):', err);
-      res.status(500).json({ message: 'Error actualizando papelería', error: err.message });
+    if (!nombre || cantidad_adquirida === null || cantidad_existente === null || !presentacion) {
+      return res.status(400).json({ message: 'Faltan campos requeridos' });
     }
-  },
 
-  // PATCH /api/papeleria/:id/existencias
-  async ajustarExistencias(req, res) {
-    const { id } = req.params;
-    const { delta, cantidad } = req.body || {};
     try {
-      if (typeof cantidad !== 'undefined') {
-        const c = Number(cantidad);
-        if (!Number.isFinite(c) || c < 0) {
-          return res.status(400).json({ message: 'Cantidad inválida. Debe ser >= 0' });
-        }
-        const [result] = await pool.query('UPDATE papeleria SET cantidad_existente = ? WHERE id = ?', [c, id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-      } else if (typeof delta !== 'undefined') {
-        const d = Number(delta);
-        if (!Number.isFinite(d) || d === 0) {
-          return res.status(400).json({ message: 'Delta inválido. Debe ser distinto de 0' });
-        }
-        const [result] = await pool.query(
-          'UPDATE papeleria SET cantidad_existente = GREATEST(0, cantidad_existente + ?) WHERE id = ?',
-          [d, id]
+      const [exists] = await pool.query('SELECT id FROM papeleria WHERE id = ?', [id]);
+      if (!exists.length) return res.status(404).json({ message: 'No encontrado' });
+
+      if (imagen) {
+        await pool.query(
+          'UPDATE papeleria SET nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?, presentacion = ?, marca = ?, descripcion = ?, fecha_adquisicion = ?, ubicacion = ?, observaciones = ?, imagen = ? WHERE id = ?',
+          [
+            nombre,
+            cantidad_adquirida,
+            cantidad_existente,
+            presentacion,
+            marca,
+            descripcion,
+            fecha_adquisicion,
+            ubicacion,
+            observaciones,
+            imagen,
+            id
+          ]
         );
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
       } else {
-        return res.status(400).json({ message: 'Provee cantidad (>=0) o delta (!=0)' });
-      }
-
-      const [rows] = await pool.query('SELECT cantidad_existente FROM papeleria WHERE id = ?', [id]);
-      const nuevo = rows[0]?.cantidad_existente;
-
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-          [req.user.id, 'AJUSTAR_EXISTENCIAS', 'PAPELERIA', fecha]
-        );
-
-        // REGISTRO DE MOVIMIENTO
-        await pool.query(
-          'INSERT INTO movimientos_inventario (producto_tipo, producto_referencia, usuario_id, tipo_movimiento, fecha) VALUES (?, ?, ?, ?, ?)',
-          ['PAPELERIA', id.toString(), req.user.id, 'AJUSTE', fecha]
+          'UPDATE papeleria SET nombre = ?, cantidad_adquirida = ?, cantidad_existente = ?, presentacion = ?, marca = ?, descripcion = ?, fecha_adquisicion = ?, ubicacion = ?, observaciones = ? WHERE id = ?',
+          [
+            nombre,
+            cantidad_adquirida,
+            cantidad_existente,
+            presentacion,
+            marca,
+            descripcion,
+            fecha_adquisicion,
+            ubicacion,
+            observaciones,
+            id
+          ]
         );
       }
 
-      return res.json({ id, cantidad_existente: nuevo });
+      res.json({ message: 'Papelería actualizada' });
     } catch (err) {
-      console.error('Error PATCH /:id/existencias (papeleria):', err);
-      res.status(500).json({ message: 'Error ajustando existencias' });
+      console.error('Error PUT /api/papeleria/:id:', err);
+      res.status(500).json({ message: 'Error actualizando papelería' });
     }
   },
 
-  // DELETE /api/papeleria/:id
-  async deletePapeleria(req, res) {
-    const { id } = req.params;
+  deletePapeleria: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
+
     try {
-      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-        return res.status(403).json({ message: 'No tienes permisos para eliminar. Solo administradores.' });
-      }
       const [result] = await pool.query('DELETE FROM papeleria WHERE id = ?', [id]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
-
-      // REGISTRO DE LOG - Con req.user.id
-      if (req.user && req.user.id) {
-        const fecha = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'America/Bogota',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        }).format(new Date());
-        await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-          [req.user.id, 'ELIMINAR', 'PAPELERIA', fecha]
-        );
-      }
-
-      res.json({ message: 'Papelería eliminada correctamente' });
+      if (!result.affectedRows) return res.status(404).json({ message: 'No encontrado' });
+      res.json({ message: 'Papelería eliminada' });
     } catch (err) {
-      console.error('Error DELETE /:id (papeleria):', err);
+      console.error('Error DELETE /api/papeleria/:id:', err);
       res.status(500).json({ message: 'Error eliminando papelería' });
     }
   }
