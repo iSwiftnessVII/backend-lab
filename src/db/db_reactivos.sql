@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS catalogo_reactivos (
     nombre VARCHAR(200) NOT NULL,
     tipo_reactivo VARCHAR(50) NOT NULL,
     clasificacion_sga VARCHAR(100) NOT NULL,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
     descripcion TEXT,
     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS reactivos (
     fecha_adquisicion DATE NOT NULL,
     fecha_vencimiento DATE NOT NULL,
     observaciones TEXT,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 

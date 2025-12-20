@@ -49,12 +49,13 @@ const reactivosController = {
     if (limit > 500) limit = 500;
     
     try {
-      const baseSelect = 'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga FROM catalogo_reactivos';
-      const where = q ? ' WHERE LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ?' : '';
+      const baseSelect = 'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, activo FROM catalogo_reactivos';
+      const baseWhere = ' WHERE activo = 1';
+      const where = q ? `${baseWhere} AND (LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ?)` : baseWhere;
       const order = ' ORDER BY codigo';
       
       if (limit > 0) {
-        const countQuery = `SELECT COUNT(*) as total FROM catalogo_reactivos${q ? ' WHERE LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ?' : ''}`;
+        const countQuery = `SELECT COUNT(*) as total FROM catalogo_reactivos${where}`;
         let totalRows;
         if (q) {
           [totalRows] = await pool.query(countQuery, [likeParam(q), likeParam(q)]);
@@ -66,7 +67,7 @@ const reactivosController = {
         if (q) {
           [rows] = await pool.query(`${baseSelect}${where}${order} LIMIT ? OFFSET ?`, [likeParam(q), likeParam(q), limit, offset]);
         } else {
-          [rows] = await pool.query(`${baseSelect}${order} LIMIT ? OFFSET ?`, [limit, offset]);
+          [rows] = await pool.query(`${baseSelect}${where}${order} LIMIT ? OFFSET ?`, [limit, offset]);
         }
         return res.json({ rows, total });
       } else {
@@ -74,7 +75,7 @@ const reactivosController = {
         if (q) {
           [rows] = await pool.query(`${baseSelect}${where}${order}`, [likeParam(q), likeParam(q)]);
         } else {
-          [rows] = await pool.query(`${baseSelect}${order}`);
+          [rows] = await pool.query(`${baseSelect}${where}${order}`);
         }
         return res.json(rows);
       }
@@ -88,7 +89,10 @@ const reactivosController = {
   getCatalogoItem: async (req, res) => {
     const { codigo } = req.params;
     try {
-      const [rows] = await pool.query('SELECT codigo, nombre, tipo_reactivo, clasificacion_sga FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+      const [rows] = await pool.query(
+        'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, activo FROM catalogo_reactivos WHERE codigo = ? AND activo = 1',
+        [codigo]
+      );
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       res.json(rows[0]);
     } catch (err) {
@@ -105,7 +109,7 @@ const reactivosController = {
     }
     try {
       await pool.query(
-        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga) VALUES (?, ?, ?, ?)',
+        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, activo) VALUES (?, ?, ?, ?, 1)',
         [codigo, nombre, tipo_reactivo, clasificacion_sga]
       );
       if (req.user && req.user.id) {
@@ -122,6 +126,17 @@ const reactivosController = {
       res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
+        try {
+          const [exist] = await pool.query('SELECT activo FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+          const activo = exist?.[0]?.activo;
+          if (exist.length && (activo === 0 || activo === false)) {
+            await pool.query(
+              'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ?, activo = 1 WHERE codigo = ?',
+              [nombre, tipo_reactivo, clasificacion_sga, codigo]
+            );
+            return res.status(200).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, reactivado: true });
+          }
+        } catch (_) {}
         return res.status(409).json({ message: 'Código ya existe en catálogo' });
       }
       console.error('Error POST /catalogo:', err);
@@ -136,7 +151,7 @@ const reactivosController = {
     
     try {
       // 1. Obtener datos actuales
-      const [rowsCurrent] = await pool.query('SELECT * FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+      const [rowsCurrent] = await pool.query('SELECT * FROM catalogo_reactivos WHERE codigo = ? AND activo = 1', [codigo]);
       if (rowsCurrent.length === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
@@ -151,7 +166,7 @@ const reactivosController = {
 
       // 3. Actualizar
       await pool.query(
-        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ? WHERE codigo = ?',
+        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ? WHERE codigo = ? AND activo = 1',
         [
           datosNuevos.nombre || null, 
           datosNuevos.tipo_reactivo || null, 
@@ -217,7 +232,7 @@ deleteCatalogo: async (req, res) => {
     const { codigo } = req.params;
     try {
       // Pre-chequeo: evitar violar FK si existen reactivos con ese código (TU LÓGICA)
-      const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM reactivos WHERE codigo = ?', [codigo]);
+      const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM reactivos WHERE codigo = ? AND activo = 1', [codigo]);
       const cnt = rows?.[0]?.cnt || 0;
       if (cnt > 0) {
         return res.status(409).json({
@@ -227,8 +242,12 @@ deleteCatalogo: async (req, res) => {
         });
       }
 
-      const [result] = await pool.query('DELETE FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
-      if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+      const [result] = await pool.query('UPDATE catalogo_reactivos SET activo = 0 WHERE codigo = ? AND activo = 1', [codigo]);
+      if (result.affectedRows === 0) {
+        const [exists] = await pool.query('SELECT codigo FROM catalogo_reactivos WHERE codigo = ?', [codigo]);
+        if (!exists.length) return res.status(404).json({ message: 'No encontrado' });
+        return res.json({ message: 'Eliminado del catálogo' });
+      }
 
       // REGISTRO DE LOG - Solo si hay usuario autenticado
       if (req.user && req.user.id) {
@@ -245,12 +264,6 @@ deleteCatalogo: async (req, res) => {
 
       res.json({ message: 'Eliminado del catálogo' });
     } catch (err) {
-      if (err && err.code === 'ER_ROW_IS_REFERENCED_2') {
-        return res.status(409).json({
-          message: 'No se puede eliminar del catálogo: hay registros que dependen de este código',
-          codigo
-        });
-      }
       console.error('Error DELETE /catalogo/:codigo:', err);
       res.status(500).json({ message: 'Error eliminando del catálogo' });
     }
@@ -266,7 +279,7 @@ deleteCatalogo: async (req, res) => {
         `SELECT hs.id
          FROM hoja_seguridad hs
          JOIN reactivos r ON r.lote = hs.lote
-         WHERE r.codigo = ? AND hs.contenido_pdf IS NOT NULL
+         WHERE r.codigo = ? AND r.activo = 1 AND hs.contenido_pdf IS NOT NULL
          ORDER BY hs.fecha_subida DESC
          LIMIT 1`,
         [codigo]
@@ -287,7 +300,7 @@ deleteCatalogo: async (req, res) => {
         `SELECT hs.contenido_pdf
          FROM hoja_seguridad hs
          JOIN reactivos r ON r.lote = hs.lote
-         WHERE r.codigo = ?
+         WHERE r.codigo = ? AND r.activo = 1
          ORDER BY hs.fecha_subida DESC
          LIMIT 1`,
         [codigo]
@@ -410,7 +423,7 @@ deleteCatalogo: async (req, res) => {
         `SELECT ca.id
          FROM cert_analisis ca
          JOIN reactivos r ON r.lote = ca.lote
-         WHERE r.codigo = ? AND ca.contenido_pdf IS NOT NULL
+         WHERE r.codigo = ? AND r.activo = 1 AND ca.contenido_pdf IS NOT NULL
          ORDER BY ca.fecha_subida DESC
          LIMIT 1`,
         [codigo]
@@ -430,7 +443,7 @@ deleteCatalogo: async (req, res) => {
         `SELECT ca.contenido_pdf
          FROM cert_analisis ca
          JOIN reactivos r ON r.lote = ca.lote
-         WHERE r.codigo = ?
+         WHERE r.codigo = ? AND r.activo = 1
          ORDER BY ca.fecha_subida DESC
          LIMIT 1`,
         [codigo]
@@ -553,38 +566,29 @@ deleteCatalogo: async (req, res) => {
     if (limit > 500) limit = 500;
 
     try {
-      // Base SELECT y WHERE dinámico
-      const baseSelect = 'SELECT * FROM reactivos';
-      const whereClause = q ? ` WHERE LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?` : '';
+      const conditions = ['activo = 1'];
+      const params = [];
+      if (q) {
+        conditions.push('(LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?)');
+        params.push(likeParam(q), likeParam(q), likeParam(q), likeParam(q));
+      }
+      const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+      const baseSelect = 'SELECT * FROM reactivos' + whereClause;
       const orderClause = ' ORDER BY fecha_creacion DESC';
 
       // Sin límite: devolver array completo (comportamiento existente)
       if (limit === 0) {
-        if (!q) {
-          const [rows] = await pool.query(baseSelect + orderClause);
-          return res.json(rows);
-        } else {
-          const params = [likeParam(q), likeParam(q), likeParam(q), likeParam(q)];
-          const [rows] = await pool.query(baseSelect + whereClause + orderClause, params);
-            return res.json(rows);
-        }
+        const [rows] = await pool.query(baseSelect + orderClause, params);
+        return res.json(rows);
       }
 
       // Con límite: devolver objeto { rows, total }
       let total = 0;
-      if (!q) {
-        const [countRows] = await pool.query('SELECT COUNT(*) AS total FROM reactivos');
-        total = countRows[0]?.total || 0;
-        const [rows] = await pool.query(baseSelect + orderClause + ' LIMIT ? OFFSET ?', [limit, offset]);
-        return res.json({ rows, total });
-      } else {
-        const countSql = 'SELECT COUNT(*) AS total FROM reactivos' + whereClause;
-        const params = [likeParam(q), likeParam(q), likeParam(q), likeParam(q)];
-        const [countRows] = await pool.query(countSql, params);
-        total = countRows[0]?.total || 0;
-        const [rows] = await pool.query(baseSelect + whereClause + orderClause + ' LIMIT ? OFFSET ?', [...params, limit, offset]);
-        return res.json({ rows, total });
-      }
+      const countSql = 'SELECT COUNT(*) AS total FROM reactivos' + whereClause;
+      const [countRows] = await pool.query(countSql, params);
+      total = countRows[0]?.total || 0;
+      const [rows] = await pool.query(baseSelect + orderClause + ' LIMIT ? OFFSET ?', [...params, limit, offset]);
+      return res.json({ rows, total });
     } catch (err) {
       console.error('Error GET / (reactivos):', err);
       res.status(500).json({ message: 'Error listando reactivos' });
@@ -594,7 +598,7 @@ deleteCatalogo: async (req, res) => {
   // GET /api/reactivos/total - devuelve solo el total de filas (uso liviano para fallback en frontend)
   getReactivosTotal: async (req, res) => {
     try {
-      const [rows] = await pool.query('SELECT COUNT(*) AS total FROM reactivos');
+      const [rows] = await pool.query('SELECT COUNT(*) AS total FROM reactivos WHERE activo = 1');
       const total = rows[0]?.total || 0;
       res.json({ total });
     } catch (err) {
@@ -607,7 +611,7 @@ deleteCatalogo: async (req, res) => {
   getReactivoByLote: async (req, res) => {
     const { lote } = req.params;
     try {
-      const [rows] = await pool.query('SELECT * FROM reactivos WHERE lote = ?', [lote]);
+      const [rows] = await pool.query('SELECT * FROM reactivos WHERE lote = ? AND activo = 1', [lote]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       res.json(rows[0]);
     } catch (err) {
@@ -691,7 +695,7 @@ deleteCatalogo: async (req, res) => {
     const r = req.body || {};
     try {
       // 1. Obtener datos actuales
-      const [rowsCurrent] = await pool.query('SELECT * FROM reactivos WHERE lote = ?', [lote]);
+      const [rowsCurrent] = await pool.query('SELECT * FROM reactivos WHERE lote = ? AND activo = 1', [lote]);
       if (rowsCurrent.length === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
@@ -732,7 +736,7 @@ deleteCatalogo: async (req, res) => {
           codigo = ?, nombre = ?, marca = ?, referencia = ?, cas = ?, presentacion = ?, presentacion_cant = ?, cantidad_total = ?,
           fecha_adquisicion = ?, fecha_vencimiento = ?, observaciones = ?, tipo_id = ?, clasificacion_id = ?, unidad_id = ?, estado_id = ?,
           almacenamiento_id = ?, tipo_recipiente_id = ?
-        WHERE lote = ?`,
+        WHERE lote = ? AND activo = 1`,
         [
           codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
           fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
@@ -821,20 +825,25 @@ deleteCatalogo: async (req, res) => {
         });
     }
 
-
-
-
     const { lote } = req.params;
     try {
-        const [result] = await pool.query('DELETE FROM reactivos WHERE lote = ?', [lote]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
+        const [result] = await pool.query('UPDATE reactivos SET activo = 0 WHERE lote = ? AND activo = 1', [lote]);
+        if (result.affectedRows === 0) {
+          const [exists] = await pool.query('SELECT lote FROM reactivos WHERE lote = ?', [lote]);
+          if (!exists.length) return res.status(404).json({ message: 'No encontrado' });
+          return res.json({ message: 'Eliminado' });
+        }
 
         // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
-            await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
-                [req.user.id, 'ELIMINAR', 'REACTIVOS']
-            );
+            try {
+              await pool.query(
+                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
+                  [req.user.id, 'ELIMINAR', 'REACTIVOS', `Eliminación de reactivo: ${lote}`, JSON.stringify({ lote })]
+              );
+            } catch (errLog) {
+              console.error('Error registrando log eliminación reactivo:', errLog);
+            }
         }
 
         res.json({ message: 'Eliminado' });
@@ -858,7 +867,7 @@ deleteCatalogo: async (req, res) => {
       await connection.beginTransaction();
 
       // Verificar existencia y cantidad actual
-      const [rows] = await connection.query('SELECT cantidad_total FROM reactivos WHERE lote = ? FOR UPDATE', [lote]);
+      const [rows] = await connection.query('SELECT cantidad_total FROM reactivos WHERE lote = ? AND activo = 1 FOR UPDATE', [lote]);
       if (rows.length === 0) {
         await connection.rollback();
         return res.status(404).json({ message: 'Reactivo no encontrado' });
@@ -889,7 +898,7 @@ deleteCatalogo: async (req, res) => {
 
       // Actualizar reactivos
       await connection.query(
-        'UPDATE reactivos SET cantidad_total = cantidad_total - ? WHERE lote = ?',
+        'UPDATE reactivos SET cantidad_total = cantidad_total - ? WHERE lote = ? AND activo = 1',
         [consumeCant, lote]
       );
 
@@ -928,7 +937,7 @@ deleteCatalogo: async (req, res) => {
       const ExcelJS = require('exceljs');
 
       // Datos base de reactivos
-      const [rows] = await pool.query('SELECT * FROM reactivos ORDER BY fecha_creacion DESC');
+      const [rows] = await pool.query('SELECT * FROM reactivos WHERE activo = 1 ORDER BY fecha_creacion DESC');
 
       // Cargar catálogos para mapear *_id a nombre
       const [tipos] = await pool.query('SELECT id, nombre FROM tipo_reactivo');
@@ -1162,7 +1171,7 @@ reactivosController.ejecutarNotificacionesVencimiento = async () => {
     const emails = subs.map(s => s.email).filter(Boolean);
     if (!emails.length) return;
 
-    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE fecha_vencimiento IS NOT NULL');
+    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE activo = 1 AND fecha_vencimiento IS NOT NULL');
     const hoy = new Date();
     const toMid = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
     const thresholds = [
@@ -1292,7 +1301,7 @@ reactivosController.ejecutarNotificacionesVencimiento = async () => {
 // Endpoint: listar alertas próximas (agrupadas por umbral) sin envío
 reactivosController.listarAlertasProximas = async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE fecha_vencimiento IS NOT NULL');
+    const [rows] = await pool.query('SELECT lote, codigo, nombre, fecha_vencimiento FROM reactivos WHERE activo = 1 AND fecha_vencimiento IS NOT NULL');
     const hoy = new Date();
     const toMid = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
     const thresholds = [
@@ -1349,9 +1358,9 @@ reactivosController.enviarNotificacionPrueba = async (req, res) => {
     const hoy = new Date(); const fechaAdq = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString().slice(0,10);
     // Asegurar catálogo
     await pool.query(
-      `INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre)`,
+      `INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion, activo)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activo = 1`,
       ['EXPTEST', 'Reactivo de Prueba 30D', 'No controlado', 'No peligro', 'Elemento de prueba para notificaciones']
     );
     // Obtener IDs requeridos
@@ -1370,9 +1379,10 @@ reactivosController.enviarNotificacionPrueba = async (req, res) => {
       `INSERT INTO reactivos (
         lote, codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
         fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
-        almacenamiento_id, tipo_recipiente_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        almacenamiento_id, tipo_recipiente_id, activo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
       ON DUPLICATE KEY UPDATE 
+        activo = 1,
         fecha_vencimiento = VALUES(fecha_vencimiento),
         nombre = VALUES(nombre),
         marca = VALUES(marca),

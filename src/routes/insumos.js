@@ -5,11 +5,12 @@ const insumosController = require('../controllers/insumosController');
 const { verifyToken } = require('../middleware/jwt');
 
 router.get('/', insumosController.getInsumos);
+router.get('/:id/imagen', insumosController.getInsumoImagen);
 router.get('/:id', insumosController.getInsumoById);
 router.post('/', verifyToken, uploadImage.single('imagen'), insumosController.createInsumo);
+router.post('/:id/imagen', verifyToken, uploadImage.single('imagen'), insumosController.updateInsumoImagen);
 router.put('/:id', verifyToken, uploadImage.single('imagen'), insumosController.updateInsumo);
 router.patch('/:id', verifyToken, uploadImage.single('imagen'), insumosController.updateInsumo);
 router.delete('/:id', verifyToken, insumosController.deleteInsumo);
 
 module.exports = router;
-

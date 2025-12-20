@@ -19,6 +19,44 @@ function intOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function detectImageMimeType(buffer) {
+  if (!buffer || buffer.length < 4) return 'application/octet-stream';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return 'application/octet-stream';
+}
+
+function attachImagenUrl(rows) {
+  return (rows || []).map((r) => {
+    const tiene = Number(r?.tiene_imagen) === 1 || r?.tiene_imagen === true;
+    return {
+      ...r,
+      imagen_url: tiene && r?.id ? `/api/insumos/${r.id}/imagen` : null
+    };
+  });
+}
+
 const insumosController = {
   getInsumos: async (req, res) => {
     const q = (req.query.q || '').trim();
@@ -30,7 +68,7 @@ const insumosController = {
 
     try {
       const select =
-        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones FROM insumos';
+        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones, (imagen IS NOT NULL) AS tiene_imagen FROM insumos';
       const where = q
         ? ' WHERE LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ? OR LOWER(referencia) LIKE ? OR LOWER(ubicacion) LIKE ? OR LOWER(descripcion) LIKE ? OR LOWER(observaciones) LIKE ?'
         : '';
@@ -53,7 +91,7 @@ const insumosController = {
         } else {
           [rows] = await pool.query(`${select}${order} LIMIT ? OFFSET ?`, [limit, offset]);
         }
-        return res.json({ rows, total });
+        return res.json({ rows: attachImagenUrl(rows), total });
       }
 
       let rows;
@@ -63,10 +101,30 @@ const insumosController = {
       } else {
         [rows] = await pool.query(`${select}${order}`);
       }
-      return res.json(rows);
+      return res.json(attachImagenUrl(rows));
     } catch (err) {
       console.error('Error GET /api/insumos:', err);
       res.status(500).json({ message: 'Error listando insumos' });
+    }
+  },
+
+  getInsumoImagen: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
+
+    try {
+      const [rows] = await pool.query('SELECT imagen FROM insumos WHERE id = ?', [id]);
+      if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
+      const img = rows[0]?.imagen || null;
+      if (!img || img.length === 0) return res.status(404).json({ message: 'Sin imagen' });
+
+      const buf = Buffer.isBuffer(img) ? img : Buffer.from(img);
+      res.setHeader('Content-Type', detectImageMimeType(buf));
+      res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
+      return res.send(buf);
+    } catch (err) {
+      console.error('Error GET /api/insumos/:id/imagen:', err);
+      return res.status(500).json({ message: 'Error obteniendo imagen' });
     }
   },
 
@@ -76,11 +134,15 @@ const insumosController = {
 
     try {
       const [rows] = await pool.query(
-        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones FROM insumos WHERE id = ?',
+        'SELECT id, nombre, cantidad_adquirida, cantidad_existente, presentacion, marca, referencia, descripcion, fecha_adquisicion, ubicacion, observaciones, (imagen IS NOT NULL) AS tiene_imagen FROM insumos WHERE id = ?',
         [id]
       );
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
-      res.json(rows[0]);
+      const r = rows[0];
+      res.json({
+        ...r,
+        imagen_url: (Number(r?.tiene_imagen) === 1 || r?.tiene_imagen === true) ? `/api/insumos/${r.id}/imagen` : null
+      });
     } catch (err) {
       console.error('Error GET /api/insumos/:id:', err);
       res.status(500).json({ message: 'Error obteniendo insumo' });
@@ -198,6 +260,28 @@ const insumosController = {
     }
   },
 
+  updateInsumoImagen: async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
+
+    const imagen = req.file?.buffer || null;
+    if (!imagen || imagen.length === 0) {
+      return res.status(400).json({ message: 'Imagen requerida' });
+    }
+
+    try {
+      const [exists] = await pool.query('SELECT id FROM insumos WHERE id = ?', [id]);
+      if (!exists.length) return res.status(404).json({ message: 'No encontrado' });
+
+      await pool.query('UPDATE insumos SET imagen = ? WHERE id = ?', [imagen, id]);
+
+      return res.json({ message: 'Imagen actualizada' });
+    } catch (err) {
+      console.error('Error POST /api/insumos/:id/imagen:', err);
+      return res.status(500).json({ message: 'Error actualizando imagen' });
+    }
+  },
+
   deleteInsumo: async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido' });
@@ -214,4 +298,3 @@ const insumosController = {
 };
 
 module.exports = insumosController;
-
