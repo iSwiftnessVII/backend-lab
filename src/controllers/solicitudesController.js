@@ -56,6 +56,53 @@ const ALLOWED_CLIENTE_FIELDS = new Set([
   'updated_at'
 ]);
 
+const ALLOWED_SOLICITUD_FIELDS = new Set([
+  'solicitud_id',
+  'id_cliente',
+  'tipo_solicitud',
+  'nombre_muestra',
+  'fecha_solicitud',
+  'lote_producto',
+  'fecha_vencimiento_muestra',
+  'tipo_muestra',
+  'tipo_empaque',
+  'analisis_requerido',
+  'req_analisis',
+  'cant_muestras',
+  'solicitud_recibida',
+  'fecha_entrega_muestra',
+  'recibe_personal',
+  'cargo_personal',
+  'observaciones'
+]);
+
+const ALLOWED_OFERTA_FIELDS = new Set([
+  'id_oferta',
+  'id_solicitud',
+  'genero_cotizacion',
+  'valor_cotizacion',
+  'fecha_envio_oferta',
+  'realizo_seguimiento_oferta',
+  'observacion_oferta'
+]);
+
+const ALLOWED_REVISION_FIELDS = new Set([
+  'id_revision',
+  'id_solicitud',
+  'fecha_limite_entrega',
+  'servicio_es_viable'
+]);
+
+const ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS = new Set([
+  'id_encuesta',
+  'id_solicitud',
+  'fecha_encuesta',
+  'comentarios',
+  'recomendaria_servicio',
+  'cliente_respondio',
+  'solicito_nueva_encuesta'
+]);
+
 function formatDateYMD(value) {
   if (!value) return '';
   try {
@@ -92,6 +139,21 @@ function valueToText(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   return String(v);
+}
+
+function boolToSiNo(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  if (typeof v === 'number') {
+    if (v === 1) return 'Sí';
+    if (v === 0) return 'No';
+    return '';
+  }
+  const s = String(v).trim().toLowerCase();
+  if (!s) return '';
+  if (s === '1' || s === 'true' || s === 't' || s === 'si' || s === 'sí' || s === 'yes' || s === 'y') return 'Sí';
+  if (s === '0' || s === 'false' || s === 'f' || s === 'no' || s === 'n') return 'No';
+  return '';
 }
 
 async function fetchClienteDTO({ id_cliente, numero_identificacion, numero }) {
@@ -177,10 +239,148 @@ async function fetchClienteDTO({ id_cliente, numero_identificacion, numero }) {
   cliente.tipo_vinculacion = valueToText(row.tipo_vinculacion);
   cliente.registro_realizado_por = valueToText(row.registro_realizado_por);
   cliente.observaciones = valueToText(row.observaciones);
-  cliente.activo = valueToText(row.activo);
+  cliente.activo = boolToSiNo(row.activo);
   cliente.created_at = formatDateTime(row.created_at);
   cliente.updated_at = formatDateTime(row.updated_at);
   return cliente;
+}
+
+async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
+  const idNorm = String(solicitud_id ?? '').trim();
+  if (!idNorm) return null;
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.solicitud_id,
+        s.id_cliente,
+        s.tipo_solicitud,
+        s.nombre_muestra,
+        s.fecha_solicitud,
+        s.lote_producto,
+        s.fecha_vencimiento_muestra,
+        s.tipo_muestra,
+        s.tipo_empaque,
+        s.analisis_requerido,
+        s.req_analisis,
+        s.cant_muestras,
+        s.solicitud_recibida,
+        s.fecha_entrega_muestra,
+        s.recibe_personal,
+        s.cargo_personal,
+        s.observaciones
+      FROM Solicitudes s
+      WHERE s.solicitud_id = ?
+      LIMIT 1
+    `,
+    [Number(idNorm)]
+  );
+  if (!rows || !rows.length) return null;
+
+  const row = rows[0] || {};
+  const solicitud = Object.create(null);
+  solicitud.solicitud_id = valueToText(row.solicitud_id);
+  solicitud.id_cliente = valueToText(row.id_cliente);
+  solicitud.tipo_solicitud = valueToText(row.tipo_solicitud);
+  solicitud.nombre_muestra = valueToText(row.nombre_muestra);
+  solicitud.fecha_solicitud = formatDateYMD(row.fecha_solicitud);
+  solicitud.lote_producto = valueToText(row.lote_producto);
+  solicitud.fecha_vencimiento_muestra = formatDateYMD(row.fecha_vencimiento_muestra);
+  solicitud.tipo_muestra = valueToText(row.tipo_muestra);
+  solicitud.tipo_empaque = valueToText(row.tipo_empaque);
+  solicitud.analisis_requerido = valueToText(row.analisis_requerido);
+  solicitud.req_analisis = boolToSiNo(row.req_analisis);
+  solicitud.cant_muestras = valueToText(row.cant_muestras);
+  solicitud.solicitud_recibida = valueToText(row.solicitud_recibida);
+  solicitud.fecha_entrega_muestra = formatDateYMD(row.fecha_entrega_muestra);
+  solicitud.recibe_personal = valueToText(row.recibe_personal);
+  solicitud.cargo_personal = valueToText(row.cargo_personal);
+  solicitud.observaciones = valueToText(row.observaciones);
+
+  const clienteRaw = await fetchClienteDTO({ id_cliente: row.id_cliente });
+  const cliente = clienteRaw
+    ? {
+        ...clienteRaw,
+        ciudad_codigo: clienteRaw.ciudad_codigo || clienteRaw.id_ciudad,
+        departamento_codigo: clienteRaw.departamento_codigo || clienteRaw.id_departamento,
+        id_ciudad: clienteRaw.ciudad || clienteRaw.id_ciudad,
+        id_departamento: clienteRaw.departamento || clienteRaw.id_departamento
+      }
+    : null;
+
+  const [ofertaRows] = await pool.query(
+    `
+      SELECT
+        o.id_oferta,
+        o.id_solicitud,
+        o.genero_cotizacion,
+        o.valor_cotizacion,
+        o.fecha_envio_oferta,
+        o.realizo_seguimiento_oferta,
+        o.observacion_oferta
+      FROM oferta o
+      WHERE o.id_solicitud = ?
+      LIMIT 1
+    `,
+    [Number(idNorm)]
+  );
+  const ofertaRow = (ofertaRows && ofertaRows.length) ? ofertaRows[0] : null;
+  const oferta = Object.create(null);
+  oferta.id_oferta = valueToText(ofertaRow?.id_oferta);
+  oferta.id_solicitud = valueToText(ofertaRow?.id_solicitud ?? row.solicitud_id);
+  oferta.genero_cotizacion = boolToSiNo(ofertaRow?.genero_cotizacion);
+  oferta.valor_cotizacion = valueToText(ofertaRow?.valor_cotizacion);
+  oferta.fecha_envio_oferta = formatDateYMD(ofertaRow?.fecha_envio_oferta);
+  oferta.realizo_seguimiento_oferta = boolToSiNo(ofertaRow?.realizo_seguimiento_oferta);
+  oferta.observacion_oferta = valueToText(ofertaRow?.observacion_oferta);
+
+  const [revisionRows] = await pool.query(
+    `
+      SELECT
+        r.id_revision,
+        r.id_solicitud,
+        r.fecha_limite_entrega,
+        r.servicio_es_viable
+      FROM revision_oferta r
+      WHERE r.id_solicitud = ?
+      LIMIT 1
+    `,
+    [Number(idNorm)]
+  );
+  const revisionRow = (revisionRows && revisionRows.length) ? revisionRows[0] : null;
+  const revision = Object.create(null);
+  revision.id_revision = valueToText(revisionRow?.id_revision);
+  revision.id_solicitud = valueToText(revisionRow?.id_solicitud ?? row.solicitud_id);
+  revision.fecha_limite_entrega = formatDateYMD(revisionRow?.fecha_limite_entrega);
+  revision.servicio_es_viable = boolToSiNo(revisionRow?.servicio_es_viable);
+
+  const [seguimientoRows] = await pool.query(
+    `
+      SELECT
+        e.id_encuesta,
+        e.id_solicitud,
+        e.fecha_encuesta,
+        e.comentarios,
+        e.recomendaria_servicio,
+        e.cliente_respondio,
+        e.solicito_nueva_encuesta
+      FROM seguimiento_encuesta e
+      WHERE e.id_solicitud = ?
+      LIMIT 1
+    `,
+    [Number(idNorm)]
+  );
+  const segRow = (seguimientoRows && seguimientoRows.length) ? seguimientoRows[0] : null;
+  const seguimiento_encuesta = Object.create(null);
+  seguimiento_encuesta.id_encuesta = valueToText(segRow?.id_encuesta);
+  seguimiento_encuesta.id_solicitud = valueToText(segRow?.id_solicitud ?? row.solicitud_id);
+  seguimiento_encuesta.fecha_encuesta = formatDateYMD(segRow?.fecha_encuesta);
+  seguimiento_encuesta.comentarios = valueToText(segRow?.comentarios);
+  seguimiento_encuesta.recomendaria_servicio = boolToSiNo(segRow?.recomendaria_servicio);
+  seguimiento_encuesta.cliente_respondio = boolToSiNo(segRow?.cliente_respondio);
+  seguimiento_encuesta.solicito_nueva_encuesta = boolToSiNo(segRow?.solicito_nueva_encuesta);
+
+  return { solicitud, cliente, oferta, revision, seguimiento_encuesta };
 }
 
 function collectTagsFromText(text) {
@@ -300,6 +500,149 @@ async function generateClienteDocxFromTemplate(templateBuffer, cliente) {
   });
 
   doc.setData({ cliente });
+  try {
+    doc.render();
+  } catch (err) {
+    const msg = (err && err.message) ? String(err.message) : 'Error generando documento Word';
+    const e = new Error(msg);
+    e.status = err?.status || 400;
+    throw e;
+  }
+  const out = doc.getZip().generate({ type: 'nodebuffer' });
+  return Buffer.from(out);
+}
+
+function validateSolicitudDocTags(tags) {
+  const invalid = [];
+  for (const tag of tags) {
+    const t = String(tag || '').trim();
+    const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)$/.exec(t);
+    if (!m) {
+      invalid.push(t);
+      continue;
+    }
+    const scope = m[1];
+    const field = m[2];
+    const ok =
+      (scope === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(field)) ||
+      (scope === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
+      (scope === 'oferta' && ALLOWED_OFERTA_FIELDS.has(field)) ||
+      (scope === 'revision' && ALLOWED_REVISION_FIELDS.has(field)) ||
+      (scope === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(field));
+    if (!ok) invalid.push(t);
+  }
+  return invalid;
+}
+
+function replaceExcelSolicitudDocText(text, data) {
+  return String(text ?? '').replace(
+    /{{\s*(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)\s*}}/g,
+    (_, scope, field) => {
+      const s = String(scope || '').trim();
+      const f = String(field || '').trim();
+      const allowed =
+        (s === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(f)) ||
+        (s === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(f)) ||
+        (s === 'oferta' && ALLOWED_OFERTA_FIELDS.has(f)) ||
+        (s === 'revision' && ALLOWED_REVISION_FIELDS.has(f)) ||
+        (s === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(f));
+      if (!allowed) return '';
+      const src = data && data[s] ? data[s] : null;
+      return src ? valueToText(src[f]) : '';
+    }
+  );
+}
+
+async function generateSolicitudXlsxFromTemplate(templateBuffer, data) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(templateBuffer);
+
+  const tags = new Set();
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          for (const t of collectTagsFromText(v)) tags.add(t);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          for (const part of v.richText) {
+            for (const t of collectTagsFromText(part?.text)) tags.add(t);
+          }
+        }
+      });
+    });
+  });
+
+  const invalid = validateSolicitudDocTags(tags);
+  if (invalid.length) {
+    const err = new Error('Plantilla contiene llaves no permitidas: ' + invalid.slice(0, 20).join(', '));
+    err.status = 400;
+    throw err;
+  }
+
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          cell.value = replaceExcelSolicitudDocText(v, data);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          cell.value = {
+            ...v,
+            richText: v.richText.map((part) => ({
+              ...part,
+              text: replaceExcelSolicitudDocText(part?.text, data)
+            }))
+          };
+        }
+      });
+    });
+  });
+
+  const out = await workbook.xlsx.writeBuffer();
+  return Buffer.from(out);
+}
+
+function docxSolicitudDocSafeParser(tag) {
+  const raw = String(tag ?? '').trim();
+  if (!raw) return { get: () => '' };
+  const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)$/.exec(raw);
+  if (!m) {
+    const e = new Error('Llave no permitida: ' + raw);
+    e.status = 400;
+    throw e;
+  }
+  const scope = m[1];
+  const field = m[2];
+  const allowed =
+    (scope === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(field)) ||
+    (scope === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
+    (scope === 'oferta' && ALLOWED_OFERTA_FIELDS.has(field)) ||
+    (scope === 'revision' && ALLOWED_REVISION_FIELDS.has(field)) ||
+    (scope === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(field));
+  if (!allowed) {
+    const e = new Error('Llave no permitida: ' + raw);
+    e.status = 400;
+    throw e;
+  }
+  return {
+    get: (scopeData) => {
+      const obj = scopeData && scopeData[scope] ? scopeData[scope] : null;
+      return obj ? obj[field] : '';
+    }
+  };
+}
+
+async function generateSolicitudDocxFromTemplate(templateBuffer, data) {
+  const zip = new PizZip(templateBuffer);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    parser: docxSolicitudDocSafeParser,
+    nullGetter: () => ''
+  });
+
+  doc.setData(data || {});
   try {
     doc.render();
   } catch (err) {
@@ -1597,6 +1940,53 @@ const solicitudesController = {
 
       const ext = isXlsx ? 'xlsx' : 'docx';
       const filename = `cliente_${safeFileComponent(cliente.numero_identificacion || cliente.numero || cliente.id_cliente)}.${ext}`;
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader(
+        'Content-Type',
+        isXlsx
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(outBuffer);
+    } catch (err) {
+      const status = err?.status ? Number(err.status) : 500;
+      const message = err?.message || 'Error generando documento';
+      return res.status(Number.isFinite(status) ? status : 500).json({ message });
+    }
+  },
+
+  generarDocumentoSolicitud: async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file || !file.buffer) {
+        return res.status(400).json({ message: 'Plantilla requerida' });
+      }
+
+      const solicitud_id = String((req.body || {}).solicitud_id || '').trim();
+      if (!solicitud_id) {
+        return res.status(400).json({ message: 'Debe enviar solicitud_id' });
+      }
+
+      const dto = await fetchSolicitudDocumentoDTO({ solicitud_id });
+      if (!dto || !dto.solicitud) {
+        return res.status(404).json({ message: 'Solicitud no encontrada' });
+      }
+
+      const original = String(file.originalname || '').toLowerCase();
+      const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(file.mimetype || '').toLowerCase());
+      const isDocx = original.endsWith('.docx') || /wordprocessingml/.test(String(file.mimetype || '').toLowerCase());
+      if (!isXlsx && !isDocx) {
+        return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
+      }
+
+      const outBuffer = isXlsx
+        ? await generateSolicitudXlsxFromTemplate(file.buffer, dto)
+        : await generateSolicitudDocxFromTemplate(file.buffer, dto);
+
+      const ext = isXlsx ? 'xlsx' : 'docx';
+      const filename = `solicitud_${safeFileComponent(dto.solicitud.solicitud_id)}.${ext}`;
 
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader(

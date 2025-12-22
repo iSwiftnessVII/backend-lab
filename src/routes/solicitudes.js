@@ -22,6 +22,7 @@ router.post('/', verifyToken, solicitudesController.createSolicitud);
 router.get('/:id', solicitudesController.getSolicitudById);
 router.put('/:id', verifyToken, solicitudesController.updateSolicitud);
 router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
+router.post('/documentos/generar', verifyToken, upload.single('template'), solicitudesController.generarDocumentoSolicitud);
 
 // Endpoints de detalle
 router.get('/detalle/lista', solicitudesController.getSolicitudesDetalle);
