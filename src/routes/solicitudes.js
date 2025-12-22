@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const solicitudesController = require('../controllers/solicitudesController');
+const upload = require('../middleware/upload');
 const { verifyToken } = require('../middleware/jwt');
 
 // ---------- DEPARTAMENTOS Y CIUDADES ----------
@@ -13,6 +14,7 @@ router.post('/clientes', verifyToken, solicitudesController.createCliente);
 router.get('/clientes/:id', solicitudesController.getClienteById);
 router.put('/clientes/:id', verifyToken, solicitudesController.updateCliente);
 router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente);
+router.post('/clientes/documentos/generar', verifyToken, upload.single('template'), solicitudesController.generarDocumentoCliente);
 
 // ---------- SOLICITUDES CRUD ----------
 router.get('/', solicitudesController.getSolicitudes);
