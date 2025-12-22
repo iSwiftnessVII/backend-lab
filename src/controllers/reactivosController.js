@@ -1,6 +1,9 @@
 const pool = require('../config/db');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
+const ExcelJS = require('exceljs');
+const PizZip = require('pizzip');
+const Docxtemplater = require('docxtemplater');
 
 // Helpers
 function likeParam(q) {
@@ -19,6 +22,255 @@ function numOrNull(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
   return isNaN(n) ? null : n;
+}
+
+const ALLOWED_REACTIVO_FIELDS = new Set([
+  'codigo',
+  'nombre',
+  'marca',
+  'lote',
+  'referencia',
+  'cas',
+  'presentacion',
+  'cantidad_total',
+  'fecha_adquisicion',
+  'fecha_vencimiento',
+  'tipo',
+  'clasificacion',
+  'unidad',
+  'unidad_simbolo',
+  'estado',
+  'almacenamiento',
+  'tipo_recipiente'
+]);
+
+function formatDateYMD(value) {
+  if (!value) return '';
+  try {
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  } catch {}
+  return '';
+}
+
+function safeFileComponent(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[^\w.\-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'archivo';
+}
+
+function valueToText(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return formatDateYMD(v);
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  return String(v);
+}
+
+async function fetchReactivoDTO({ codigo, lote }) {
+  const loteNorm = String(lote || '').trim();
+  const codigoNorm = String(codigo || '').trim();
+  if (!codigoNorm && !loteNorm) return null;
+
+  const where = ['r.activo = 1'];
+  const params = [];
+  if (loteNorm) {
+    where.push('r.lote = ?');
+    params.push(loteNorm);
+  } else {
+    where.push('r.codigo = ?');
+    params.push(codigoNorm);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        r.codigo,
+        r.nombre,
+        r.marca,
+        r.lote,
+        r.referencia,
+        r.cas,
+        r.presentacion,
+        r.cantidad_total,
+        r.fecha_adquisicion,
+        r.fecha_vencimiento,
+        tr.nombre AS tipo,
+        cs.nombre AS clasificacion,
+        u.nombre AS unidad_simbolo,
+        u.nombre AS unidad,
+        ef.nombre AS estado,
+        a.nombre AS almacenamiento,
+        trc.nombre AS tipo_recipiente
+      FROM reactivos r
+      JOIN catalogo_reactivos c ON c.codigo = r.codigo
+      LEFT JOIN tipo_reactivo tr ON tr.id = r.tipo_id
+      LEFT JOIN clasificacion_sga cs ON cs.id = r.clasificacion_id
+      LEFT JOIN unidades u ON u.id = r.unidad_id
+      LEFT JOIN estado_fisico ef ON ef.id = r.estado_id
+      LEFT JOIN almacenamiento a ON a.id = r.almacenamiento_id
+      LEFT JOIN tipo_recipiente trc ON trc.id = r.tipo_recipiente_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY r.fecha_creacion DESC
+      LIMIT 1
+    `,
+    params
+  );
+  if (!rows || !rows.length) return null;
+
+  const row = rows[0] || {};
+  const reactivo = Object.create(null);
+  reactivo.codigo = valueToText(row.codigo);
+  reactivo.nombre = valueToText(row.nombre);
+  reactivo.marca = valueToText(row.marca);
+  reactivo.lote = valueToText(row.lote);
+  reactivo.referencia = valueToText(row.referencia);
+  reactivo.cas = valueToText(row.cas);
+  reactivo.presentacion = row.presentacion ?? '';
+  reactivo.cantidad_total = row.cantidad_total ?? '';
+  reactivo.fecha_adquisicion = formatDateYMD(row.fecha_adquisicion);
+  reactivo.fecha_vencimiento = formatDateYMD(row.fecha_vencimiento);
+  reactivo.tipo = valueToText(row.tipo);
+  reactivo.clasificacion = valueToText(row.clasificacion);
+  reactivo.unidad = valueToText(row.unidad);
+  reactivo.unidad_simbolo = valueToText(row.unidad_simbolo || row.unidad);
+  reactivo.estado = valueToText(row.estado);
+  reactivo.almacenamiento = valueToText(row.almacenamiento);
+  reactivo.tipo_recipiente = valueToText(row.tipo_recipiente);
+  return reactivo;
+}
+
+function collectTagsFromText(text) {
+  const s = String(text ?? '');
+  const tags = new Set();
+  const re = /{{\s*([^{}]+?)\s*}}/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const inner = String(m[1] ?? '').trim();
+    if (inner) tags.add(inner);
+  }
+  return tags;
+}
+
+function validateTags(tags) {
+  const invalid = [];
+  for (const tag of tags) {
+    const t = String(tag || '').trim();
+    const m = /^reactivo\.([A-Za-z0-9_]+)$/.exec(t);
+    if (!m) {
+      invalid.push(t);
+      continue;
+    }
+    const field = m[1];
+    if (!ALLOWED_REACTIVO_FIELDS.has(field)) invalid.push(t);
+  }
+  return invalid;
+}
+
+function replaceExcelText(text, reactivo) {
+  return String(text ?? '').replace(/{{\s*reactivo\.([A-Za-z0-9_]+)\s*}}/g, (_, field) => {
+    if (!ALLOWED_REACTIVO_FIELDS.has(field)) return '';
+    return valueToText(reactivo[field]);
+  });
+}
+
+async function generateXlsxFromTemplate(templateBuffer, reactivo) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(templateBuffer);
+
+  const tags = new Set();
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          for (const t of collectTagsFromText(v)) tags.add(t);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          for (const part of v.richText) {
+            for (const t of collectTagsFromText(part?.text)) tags.add(t);
+          }
+        }
+      });
+    });
+  });
+
+  const invalid = validateTags(tags);
+  if (invalid.length) {
+    const err = new Error('Plantilla contiene llaves no permitidas: ' + invalid.slice(0, 20).join(', '));
+    err.status = 400;
+    throw err;
+  }
+
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          cell.value = replaceExcelText(v, reactivo);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          cell.value = {
+            ...v,
+            richText: v.richText.map((part) => ({
+              ...part,
+              text: replaceExcelText(part?.text, reactivo)
+            }))
+          };
+        }
+      });
+    });
+  });
+
+  const out = await workbook.xlsx.writeBuffer();
+  return Buffer.from(out);
+}
+
+function docxSafeParser(tag) {
+  const raw = String(tag ?? '').trim();
+  if (!raw) return { get: () => '' };
+  const m = /^reactivo\.([A-Za-z0-9_]+)$/.exec(raw);
+  if (!m) {
+    const e = new Error('Llave no permitida: ' + raw);
+    e.status = 400;
+    throw e;
+  }
+  const field = m[1];
+  if (!ALLOWED_REACTIVO_FIELDS.has(field)) {
+    const e = new Error('Llave no permitida: ' + raw);
+    e.status = 400;
+    throw e;
+  }
+  return {
+    get: (scope) => {
+      const r = scope && scope.reactivo ? scope.reactivo : null;
+      return r ? r[field] : '';
+    }
+  };
+}
+
+async function generateDocxFromTemplate(templateBuffer, reactivo) {
+  const zip = new PizZip(templateBuffer);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    parser: docxSafeParser,
+    nullGetter: () => ''
+  });
+
+  doc.setData({ reactivo });
+  try {
+    doc.render();
+  } catch (err) {
+    const msg = (err && err.message) ? String(err.message) : 'Error generando documento Word';
+    const e = new Error(msg);
+    e.status = err?.status || 400;
+    throw e;
+  }
+  const out = doc.getZip().generate({ type: 'nodebuffer' });
+  return Buffer.from(out);
 }
 
 const reactivosController = {
@@ -934,8 +1186,6 @@ deleteCatalogo: async (req, res) => {
   // Exportación Excel de reactivos (propiedad del controlador)
   exportReactivosExcel: async (req, res) => {
     try {
-      const ExcelJS = require('exceljs');
-
       // Datos base de reactivos
       const [rows] = await pool.query('SELECT * FROM reactivos WHERE activo = 1 ORDER BY fecha_creacion DESC');
 
@@ -1014,6 +1264,54 @@ deleteCatalogo: async (req, res) => {
     } catch (err) {
       console.error('Error exportando Excel reactivos:', err);
       res.status(500).json({ message: 'Error exportando reactivos a Excel' });
+    }
+  },
+
+  generarDocumentoReactivo: async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file || !file.buffer) {
+        return res.status(400).json({ message: 'Plantilla requerida' });
+      }
+
+      const codigo = String((req.body || {}).codigo || '').trim();
+      const lote = String((req.body || {}).lote || '').trim();
+      if (!codigo && !lote) {
+        return res.status(400).json({ message: 'Debe enviar codigo (y opcionalmente lote)' });
+      }
+
+      const reactivo = await fetchReactivoDTO({ codigo, lote });
+      if (!reactivo) {
+        return res.status(404).json({ message: 'Reactivo no encontrado' });
+      }
+
+      const original = String(file.originalname || '').toLowerCase();
+      const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(file.mimetype || '').toLowerCase());
+      const isDocx = original.endsWith('.docx') || /wordprocessingml/.test(String(file.mimetype || '').toLowerCase());
+      if (!isXlsx && !isDocx) {
+        return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
+      }
+
+      const outBuffer = isXlsx
+        ? await generateXlsxFromTemplate(file.buffer, reactivo)
+        : await generateDocxFromTemplate(file.buffer, reactivo);
+
+      const ext = isXlsx ? 'xlsx' : 'docx';
+      const filename = `reactivo_${safeFileComponent(reactivo.codigo)}_${safeFileComponent(reactivo.lote)}.${ext}`;
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader(
+        'Content-Type',
+        isXlsx
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(outBuffer);
+    } catch (err) {
+      const status = err?.status ? Number(err.status) : 500;
+      const message = err?.message || 'Error generando documento';
+      return res.status(Number.isFinite(status) ? status : 500).json({ message });
     }
   }
 };

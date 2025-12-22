@@ -85,6 +85,10 @@ router.post('/notificaciones/test', reactivosController.enviarNotificacionPrueba
 // Listar alertas próximas (6, 3, 2, 1 meses)
 router.get('/alertas-proximas', reactivosController.listarAlertasProximas);
 
+// ========== GENERACIÓN DE DOCUMENTOS ==========
+// POST /api/reactivos/documentos/generar (multipart: template + {codigo, lote?})
+router.post('/documentos/generar', verifyToken, upload.single('template'), reactivosController.generarDocumentoReactivo);
+
 // ========== REACTIVOS (CRUD) ==========
 
 // GET /api/reactivos?q=
