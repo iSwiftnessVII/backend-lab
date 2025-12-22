@@ -100,3 +100,15 @@ CREATE TABLE seguimiento_encuesta (
 
     FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+    email VARCHAR(255) PRIMARY KEY,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+    email VARCHAR(255) PRIMARY KEY,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -1097,6 +1097,13 @@ reactivosController.suscribirseReactivos = async (req, res) => {
       return res.status(400).json({ error: 'Email inválido' });
     }
     await ensureSuscripcionesTable();
+    const [existing] = await pool.query(
+      'SELECT activo FROM suscripciones_reactivos WHERE email = ? LIMIT 1',
+      [email]
+    );
+    if (existing && existing.length && existing[0] && existing[0].activo) {
+      return res.status(409).json({ error: 'Este correo ya está suscrito a reactivos' });
+    }
     await pool.query(
       `INSERT INTO suscripciones_reactivos (email, activo) VALUES (?, 1)
        ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
