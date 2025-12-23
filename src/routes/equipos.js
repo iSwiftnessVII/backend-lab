@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const equiposController = require('../controllers/equiposController');
 const uploadImage = require('../middleware/uploadImage');
+const { verifyToken } = require('../middleware/jwt');
 
 // POST /api/equipos/intervalo - Registrar intervalo de equipo
 router.post('/intervalo', equiposController.crearIntervalo);
@@ -50,6 +51,7 @@ router.delete('/:codigo', equiposController.eliminarEquipo);
 // PDFs: listar / subir / descargar / eliminar
 router.get('/pdfs/:codigo', equiposController.listarPdfsPorEquipo);
 const upload = require('../middleware/upload');
+router.post('/documentos/generar', verifyToken, upload.single('template'), equiposController.generarDocumentoEquipo);
 router.post('/pdfs/:codigo', upload.single('file'), equiposController.subirPdfEquipo);
 router.get('/pdfs/download/:id', equiposController.descargarPdf);
 router.delete('/pdfs/:id', equiposController.eliminarPdf);

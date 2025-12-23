@@ -1,4 +1,356 @@
 const pool = require('../config/db');
+const ExcelJS = require('exceljs');
+const PizZip = require('pizzip');
+const Docxtemplater = require('docxtemplater');
+
+function formatDateYMD(value) {
+  if (!value) return '';
+  try {
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  } catch {}
+  return '';
+}
+
+function safeFileComponent(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[^\w.\-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'archivo';
+}
+
+function isForbiddenKey(key) {
+  return key === '__proto__' || key === 'prototype' || key === 'constructor';
+}
+
+function valueToText(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return formatDateYMD(v);
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  return String(v);
+}
+
+function collectTagsFromText(text) {
+  const s = String(text ?? '');
+  const tags = new Set();
+  const re = /{{\s*([^{}]+?)\s*}}/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const inner = String(m[1] ?? '').trim();
+    if (inner) tags.add(inner);
+  }
+  return tags;
+}
+
+function validateReferenciaTags(tags) {
+  const invalid = [];
+  for (const tag of tags) {
+    const t = String(tag ?? '').trim();
+    if (t === '#historial' || t === '/historial' || t === '#intervalos' || t === '/intervalos') continue;
+    const m = /^(material|historial_ultimo|intervalo_ultimo|historial|intervalos)\.([A-Za-z0-9_]+)$/.exec(t);
+    if (!m) {
+      invalid.push(t);
+      continue;
+    }
+    const field = m[2];
+    if (isForbiddenKey(field)) invalid.push(t);
+  }
+  return invalid;
+}
+
+function toSafeRecord(row) {
+  const out = Object.create(null);
+  const r = row || {};
+  for (const k of Object.keys(r)) {
+    if (!k || isForbiddenKey(k)) continue;
+    const v = r[k];
+    if (Buffer.isBuffer(v)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+async function fetchReferenciaDocumentoDTO({ codigo }) {
+  const codigoNorm = String(codigo ?? '').trim();
+  if (!codigoNorm) return null;
+
+  const [materialRows] = await pool.query('SELECT * FROM material_referencia WHERE codigo_id = ? LIMIT 1', [codigoNorm]);
+  if (!materialRows || !materialRows.length) return null;
+  const material = toSafeRecord(materialRows[0] || {});
+
+  const [histRows] = await pool.query(
+    'SELECT * FROM historial_referencia WHERE codigo_material = ? ORDER BY consecutivo DESC LIMIT 500',
+    [codigoNorm]
+  );
+  const historial = Array.isArray(histRows) ? histRows.map(toSafeRecord) : [];
+
+  const [intRows] = await pool.query(
+    'SELECT * FROM intervalo_referencia WHERE codigo_material = ? ORDER BY consecutivo DESC LIMIT 500',
+    [codigoNorm]
+  );
+  const intervalos = Array.isArray(intRows) ? intRows.map(toSafeRecord) : [];
+
+  const historial_ultimo = historial.length ? historial[0] : Object.create(null);
+  const intervalo_ultimo = intervalos.length ? intervalos[0] : Object.create(null);
+
+  return { material, historial, intervalos, historial_ultimo, intervalo_ultimo };
+}
+
+function replaceExcelText(text, dto, ctx) {
+  return String(text ?? '').replace(
+    /{{\s*(material|historial_ultimo|intervalo_ultimo|historial|intervalos)\.([A-Za-z0-9_]+)\s*}}/g,
+    (_, root, field) => {
+      if (isForbiddenKey(field)) return '';
+      const obj = (root === 'historial' || root === 'intervalos')
+        ? (ctx && typeof ctx === 'object' ? ctx[root] : null)
+        : (dto ? dto[root] : null);
+      if (!obj || typeof obj !== 'object') return '';
+      if (!Object.prototype.hasOwnProperty.call(obj, field)) return '';
+      return valueToText(obj[field]);
+    }
+  );
+}
+
+function clonePlain(value) {
+  if (!value || typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function snapshotRowForTemplate(row, maxCol) {
+  const snap = {
+    height: row.height,
+    hidden: row.hidden,
+    outlineLevel: row.outlineLevel,
+    style: clonePlain(row.style),
+    cells: new Array((maxCol || 0) + 1)
+  };
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const cell = row.getCell(col);
+    snap.cells[col] = {
+      value: clonePlain(cell.value),
+      style: clonePlain(cell.style)
+    };
+  }
+  return snap;
+}
+
+function replaceCellValue(value, dto, ctx) {
+  if (typeof value === 'string') return replaceExcelText(value, dto, ctx);
+  if (value && typeof value === 'object' && Array.isArray(value.richText)) {
+    const cloned = clonePlain(value) || {};
+    if (cloned && Array.isArray(cloned.richText)) {
+      cloned.richText = cloned.richText.map((part) => ({
+        ...part,
+        text: replaceExcelText(part?.text, dto, ctx)
+      }));
+    }
+    return cloned;
+  }
+  return value;
+}
+
+function rowHasMarker(row, marker, maxCol) {
+  const m = String(marker || '');
+  if (!m) return false;
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const v = row.getCell(col).value;
+    if (typeof v === 'string' && v.includes(m)) return true;
+    if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+      for (const part of v.richText) {
+        if (typeof part?.text === 'string' && part.text.includes(m)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function applyExcelLoop(sheet, loopName, items, dto) {
+  const startMarker = `{{#${loopName}}}`;
+  const endMarker = `{{/${loopName}}}`;
+  const maxCol = Math.max(1, sheet.columnCount || 1);
+
+  while (true) {
+    let startRow = null;
+    let endRow = null;
+    for (let i = 1; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+      if (startRow === null) {
+        if (rowHasMarker(row, startMarker, maxCol)) startRow = i;
+      } else {
+        if (rowHasMarker(row, endMarker, maxCol)) { endRow = i; break; }
+      }
+    }
+    if (startRow === null || endRow === null || endRow <= startRow) break;
+
+    const templateStart = startRow + 1;
+    const templateEnd = endRow - 1;
+    const templateCount = templateEnd >= templateStart ? (templateEnd - templateStart + 1) : 0;
+    const templateSnaps = [];
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      templateSnaps.push(snapshotRowForTemplate(sheet.getRow(rowNum), maxCol));
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      if (templateCount > 0) sheet.spliceRows(templateStart, templateCount);
+      const endRowNow = endRow - templateCount;
+      sheet.spliceRows(endRowNow, 1);
+      sheet.spliceRows(startRow, 1);
+      continue;
+    }
+
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      const row = sheet.getRow(rowNum);
+      const snap = templateSnaps[r];
+      for (let col = 1; col <= maxCol; col++) {
+        row.getCell(col).value = replaceCellValue(snap.cells[col]?.value, dto, { [loopName]: items[0] });
+      }
+    }
+
+    let endMarkerRow = endRow;
+    for (let i = 1; i < items.length; i++) {
+      for (let r = 0; r < templateCount; r++) {
+        const snap = templateSnaps[r];
+        const values = new Array(maxCol + 1);
+        for (let col = 1; col <= maxCol; col++) values[col] = clonePlain(snap.cells[col]?.value);
+        const newRow = sheet.insertRow(endMarkerRow, values);
+        newRow.height = snap.height;
+        newRow.hidden = snap.hidden;
+        newRow.outlineLevel = snap.outlineLevel;
+        newRow.style = clonePlain(snap.style);
+        for (let col = 1; col <= maxCol; col++) {
+          const newCell = newRow.getCell(col);
+          newCell.style = clonePlain(snap.cells[col]?.style);
+          newCell.value = replaceCellValue(snap.cells[col]?.value, dto, { [loopName]: items[i] });
+        }
+        endMarkerRow++;
+      }
+    }
+
+    sheet.spliceRows(endMarkerRow, 1);
+    sheet.spliceRows(startRow, 1);
+  }
+}
+
+async function generateXlsxFromTemplate(templateBuffer, dto) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(templateBuffer);
+
+  const tags = new Set();
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          for (const t of collectTagsFromText(v)) tags.add(t);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          for (const part of v.richText) {
+            for (const t of collectTagsFromText(part?.text)) tags.add(t);
+          }
+        }
+      });
+    });
+  });
+
+  const invalid = validateReferenciaTags(tags);
+  if (invalid.length) {
+    const err = new Error('Plantilla contiene llaves no permitidas: ' + invalid.slice(0, 20).join(', '));
+    err.status = 400;
+    throw err;
+  }
+
+  workbook.eachSheet((sheet) => {
+    applyExcelLoop(sheet, 'historial', dto?.historial, dto);
+    applyExcelLoop(sheet, 'intervalos', dto?.intervalos, dto);
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = cell.value;
+        if (typeof v === 'string') {
+          cell.value = replaceExcelText(v, dto, null);
+        } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+          cell.value = {
+            ...v,
+            richText: v.richText.map((part) => ({
+              ...part,
+              text: replaceExcelText(part?.text, dto, null)
+            }))
+          };
+        }
+      });
+    });
+  });
+
+  const out = await workbook.xlsx.writeBuffer();
+  return Buffer.from(out);
+}
+
+function docxSafeParser(tag) {
+  const raw0 = String(tag ?? '').trim();
+  if (!raw0) return { get: () => '' };
+
+  const raw = raw0.replace(/^[#/^]+/, '').trim();
+  if (!/^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?$/.test(raw)) {
+    const e = new Error('Llave no permitida: ' + raw0);
+    e.status = 400;
+    throw e;
+  }
+
+  const parts = raw.split('.');
+  const key = parts[0];
+  const field = parts[1];
+  if (isForbiddenKey(key) || (field && isForbiddenKey(field))) {
+    const e = new Error('Llave no permitida: ' + raw0);
+    e.status = 400;
+    throw e;
+  }
+
+  return {
+    get: (scope) => {
+      if (!scope || typeof scope !== 'object') return '';
+      if (!field) {
+        if (!Object.prototype.hasOwnProperty.call(scope, key)) return '';
+        return scope[key];
+      }
+      const obj = Object.prototype.hasOwnProperty.call(scope, key) ? scope[key] : null;
+      if (!obj || typeof obj !== 'object') return '';
+      if (!Object.prototype.hasOwnProperty.call(obj, field)) return '';
+      return obj[field];
+    }
+  };
+}
+
+async function generateDocxFromTemplate(templateBuffer, dto) {
+  const zip = new PizZip(templateBuffer);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    parser: docxSafeParser,
+    nullGetter: () => ''
+  });
+
+  doc.setData(dto);
+  try {
+    doc.render();
+  } catch (err) {
+    const msg = (err && err.message) ? String(err.message) : 'Error generando documento Word';
+    const e = new Error(msg);
+    e.status = err?.status || 400;
+    throw e;
+  }
+
+  const out = doc.getZip().generate({ type: 'nodebuffer' });
+  return Buffer.from(out);
+}
 
 // Material Referencia
 const listarMateriales = async (req, res) => {
@@ -519,6 +871,55 @@ const obtenerNextIntervalo = async (req, res) => {
   }
 };
 
+const generarDocumentoReferencia = async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file || !file.buffer) {
+      return res.status(400).json({ message: 'Plantilla requerida' });
+    }
+
+    const body = req.body || {};
+    const codigo = String(body.codigo ?? body.codigo_id ?? body.codigo_material ?? '').trim();
+    if (!codigo) {
+      return res.status(400).json({ message: 'Debe enviar codigo' });
+    }
+
+    const dto = await fetchReferenciaDocumentoDTO({ codigo });
+    if (!dto) {
+      return res.status(404).json({ message: 'Material no encontrado' });
+    }
+
+    const original = String(file.originalname || '').toLowerCase();
+    const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(file.mimetype || '').toLowerCase());
+    const isDocx = original.endsWith('.docx') || /wordprocessingml/.test(String(file.mimetype || '').toLowerCase());
+    if (!isXlsx && !isDocx) {
+      return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
+    }
+
+    const outBuffer = isXlsx
+      ? await generateXlsxFromTemplate(file.buffer, dto)
+      : await generateDocxFromTemplate(file.buffer, dto);
+
+    const ext = isXlsx ? 'xlsx' : 'docx';
+    const code = dto?.material?.codigo_id ?? codigo;
+    const filename = `referencia_${safeFileComponent(code)}.${ext}`;
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader(
+      'Content-Type',
+      isXlsx
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(outBuffer);
+  } catch (err) {
+    const status = err?.status ? Number(err.status) : 500;
+    const message = err?.message || 'Error generando documento';
+    return res.status(Number.isFinite(status) ? status : 500).json({ message });
+  }
+};
+
 module.exports = {
   // Material Referencia
   listarMateriales,
@@ -541,5 +942,6 @@ module.exports = {
   listarPdfsPorReferencia,
   subirPdfReferencia,
   descargarPdfReferencia,
-  eliminarPdfReferencia
+  eliminarPdfReferencia,
+  generarDocumentoReferencia
 };

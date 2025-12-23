@@ -48,5 +48,6 @@ router.get('/pdfs/:codigo', requireAuth, volumetricosController.listarPdfsPorMat
 router.post('/pdfs/:codigo', requireAuth, upload.single('file'), volumetricosController.subirPdfMaterial);
 router.get('/pdfs/download/:id', volumetricosController.descargarPdf); // Descarga puede ser pública o requerir auth, mejor dejar pública si es enlace directo, o auth si es vía app. Pondré auth por consistencia pero cuidado con visualizadores. Lo dejaré sin auth la descarga por si acaso, o con auth si el frontend envía token. El frontend suele usar window.open o similar que NO envía headers. Mejor DEJAR SIN AUTH la descarga por ahora para evitar romper visualización.
 router.delete('/pdfs/:id', requireAuth, volumetricosController.eliminarPdf);
+router.post('/documentos/generar', requireAuth, upload.single('template'), volumetricosController.generarDocumentoVolumetrico);
 
 module.exports = router;

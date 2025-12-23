@@ -34,4 +34,6 @@ router.post('/pdf/upload', requireAuth, upload.single('archivo'), referenciaCont
 router.get('/pdf/download/:id', referenciaController.descargarPdfReferencia); // Descarga pública
 router.delete('/pdf/:id', requireAuth, referenciaController.eliminarPdfReferencia);
 
+router.post('/documentos/generar', requireAuth, upload.single('template'), referenciaController.generarDocumentoReferencia);
+
 module.exports = router;
