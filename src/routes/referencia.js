@@ -35,5 +35,9 @@ router.get('/pdf/download/:id', referenciaController.descargarPdfReferencia); //
 router.delete('/pdf/:id', requireAuth, referenciaController.eliminarPdfReferencia);
 
 router.post('/documentos/generar', requireAuth, upload.single('template'), referenciaController.generarDocumentoReferencia);
+router.get('/documentos/plantillas', requireAuth, referenciaController.listarPlantillasDocumentoReferencia);
+router.post('/documentos/plantillas', requireAuth, upload.single('template'), referenciaController.subirPlantillaDocumentoReferencia);
+router.delete('/documentos/plantillas/:id', requireAuth, referenciaController.eliminarPlantillaDocumentoReferencia);
+router.post('/documentos/plantillas/:id/generar', requireAuth, referenciaController.generarDocumentoReferenciaDesdePlantilla);
 
 module.exports = router;

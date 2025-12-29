@@ -89,6 +89,11 @@ router.get('/alertas-proximas', reactivosController.listarAlertasProximas);
 // POST /api/reactivos/documentos/generar (multipart: template + {codigo, lote?})
 router.post('/documentos/generar', verifyToken, upload.single('template'), reactivosController.generarDocumentoReactivo);
 
+router.get('/documentos/plantillas', verifyToken, reactivosController.listarPlantillasDocumentoReactivo);
+router.post('/documentos/plantillas', verifyToken, upload.single('template'), reactivosController.subirPlantillaDocumentoReactivo);
+router.delete('/documentos/plantillas/:id', verifyToken, reactivosController.eliminarPlantillaDocumentoReactivo);
+router.post('/documentos/plantillas/:id/generar', verifyToken, reactivosController.generarDocumentoReactivoDesdePlantilla);
+
 // ========== REACTIVOS (CRUD) ==========
 
 // GET /api/reactivos?q=

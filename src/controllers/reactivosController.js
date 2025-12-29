@@ -273,6 +273,28 @@ async function generateDocxFromTemplate(templateBuffer, reactivo) {
   return Buffer.from(out);
 }
 
+async function ensurePlantillasDocumentoReactivosTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS plantillas_documento_reactivos (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      nombre VARCHAR(255) NULL,
+      nombre_archivo VARCHAR(255) NOT NULL,
+      mime VARCHAR(120) NULL,
+      size_bytes INT NULL,
+      archivo LONGBLOB NOT NULL,
+      usuario_id BIGINT NULL,
+      fecha_subida TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id)
+    )
+  `);
+}
+
+function getExtLower(filename) {
+  const name = String(filename || '').toLowerCase();
+  const idx = name.lastIndexOf('.');
+  return idx >= 0 ? name.slice(idx) : '';
+}
+
 const reactivosController = {
   // GET /api/reactivos/aux
   getAux: async (req, res) => {
@@ -1264,6 +1286,114 @@ deleteCatalogo: async (req, res) => {
     } catch (err) {
       console.error('Error exportando Excel reactivos:', err);
       res.status(500).json({ message: 'Error exportando reactivos a Excel' });
+    }
+  },
+
+  listarPlantillasDocumentoReactivo: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoReactivosTable();
+      const [rows] = await pool.query(
+        `SELECT id, nombre, nombre_archivo, mime, size_bytes, usuario_id, fecha_subida
+         FROM plantillas_documento_reactivos
+         ORDER BY fecha_subida DESC, id DESC`
+      );
+      return res.json(rows);
+    } catch (err) {
+      console.error('Error GET /documentos/plantillas:', err);
+      return res.status(500).json({ message: 'Error listando plantillas' });
+    }
+  },
+
+  subirPlantillaDocumentoReactivo: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoReactivosTable();
+      const file = req.file;
+      if (!file || !file.buffer) return res.status(400).json({ message: 'Debe enviar el archivo template' });
+
+      const ext = getExtLower(file.originalname);
+      if (ext !== '.docx' && ext !== '.xlsx') {
+        return res.status(400).json({ message: 'Solo se permiten plantillas .xlsx o .docx' });
+      }
+
+      const nombreRaw = typeof (req.body || {}).nombre === 'string' ? String(req.body.nombre).trim() : '';
+      const nombre = nombreRaw ? nombreRaw : null;
+      const usuarioId = req.user && req.user.id ? Number(req.user.id) : null;
+      const sizeBytes = Number.isFinite(file.size) ? file.size : (file.buffer ? file.buffer.length : null);
+
+      const [result] = await pool.query(
+        `INSERT INTO plantillas_documento_reactivos (nombre, nombre_archivo, mime, size_bytes, archivo, usuario_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          nombre,
+          String(file.originalname || 'template'),
+          file.mimetype || null,
+          sizeBytes,
+          file.buffer,
+          usuarioId
+        ]
+      );
+
+      return res.status(201).json({
+        id: result.insertId,
+        nombre,
+        nombre_archivo: String(file.originalname || 'template'),
+        mime: file.mimetype || null,
+        size_bytes: sizeBytes,
+        usuario_id: usuarioId,
+        fecha_subida: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error POST /documentos/plantillas:', err);
+      return res.status(500).json({ message: 'Error subiendo plantilla' });
+    }
+  },
+
+  eliminarPlantillaDocumentoReactivo: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoReactivosTable();
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+
+      const [result] = await pool.query('DELETE FROM plantillas_documento_reactivos WHERE id = ?', [id]);
+      if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Error DELETE /documentos/plantillas/:id:', err);
+      return res.status(500).json({ message: 'Error eliminando plantilla' });
+    }
+  },
+
+  generarDocumentoReactivoDesdePlantilla: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoReactivosTable();
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+
+      const codigo = String((req.body || {}).codigo || '').trim();
+      const lote = String((req.body || {}).lote || '').trim();
+      if (!codigo && !lote) {
+        return res.status(400).json({ message: 'Debe enviar codigo (y opcionalmente lote)' });
+      }
+
+      const [rows] = await pool.query(
+        'SELECT nombre_archivo, mime, archivo FROM plantillas_documento_reactivos WHERE id = ? LIMIT 1',
+        [id]
+      );
+      if (!rows || !rows.length) return res.status(404).json({ message: 'Plantilla no encontrada' });
+
+      const tpl = rows[0];
+      req.body = { ...req.body, codigo, lote: lote || undefined };
+      req.file = {
+        buffer: tpl.archivo,
+        originalname: tpl.nombre_archivo,
+        mimetype: tpl.mime || 'application/octet-stream',
+        size: tpl.archivo ? tpl.archivo.length : 0
+      };
+
+      return reactivosController.generarDocumentoReactivo(req, res);
+    } catch (err) {
+      console.error('Error POST /documentos/plantillas/:id/generar:', err);
+      return res.status(500).json({ message: 'Error generando documento desde plantilla' });
     }
   },
 
