@@ -655,6 +655,28 @@ async function generateSolicitudDocxFromTemplate(templateBuffer, data) {
   return Buffer.from(out);
 }
 
+async function ensurePlantillasDocumentoSolicitudesTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS plantillas_documento_solicitudes (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      nombre VARCHAR(255) NULL,
+      nombre_archivo VARCHAR(255) NOT NULL,
+      mime VARCHAR(120) NULL,
+      size_bytes INT NULL,
+      archivo LONGBLOB NOT NULL,
+      usuario_id BIGINT NULL,
+      fecha_subida TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id)
+    )
+  `);
+}
+
+function getExtLower(filename) {
+  const name = String(filename || '').toLowerCase();
+  const idx = name.lastIndexOf('.');
+  return idx >= 0 ? name.slice(idx) : '';
+}
+
 const solicitudesController = {
   // ---------- DEPARTAMENTOS Y CIUDADES ----------
   getDepartamentos: async (req, res) => {
@@ -2001,6 +2023,221 @@ const solicitudesController = {
       const status = err?.status ? Number(err.status) : 500;
       const message = err?.message || 'Error generando documento';
       return res.status(Number.isFinite(status) ? status : 500).json({ message });
+    }
+  },
+  generarDocumentoClienteConLlavesSolicitud: async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file || !file.buffer) {
+        return res.status(400).json({ message: 'Plantilla requerida' });
+      }
+
+      const id_cliente = String((req.body || {}).id_cliente || '').trim();
+      if (!id_cliente) {
+        return res.status(400).json({ message: 'Debe enviar id_cliente' });
+      }
+
+      const cliente = await fetchClienteDTO({ id_cliente });
+      if (!cliente) {
+        return res.status(404).json({ message: 'Cliente no encontrado' });
+      }
+
+      const clienteDoc = {
+        ...cliente,
+        ciudad_codigo: cliente.ciudad_codigo || cliente.id_ciudad,
+        departamento_codigo: cliente.departamento_codigo || cliente.id_departamento,
+        id_ciudad: cliente.ciudad || cliente.id_ciudad,
+        id_departamento: cliente.departamento || cliente.id_departamento
+      };
+
+      const dto = {
+        solicitud: Object.create(null),
+        cliente: clienteDoc,
+        oferta: Object.create(null),
+        revision: Object.create(null),
+        seguimiento_encuesta: Object.create(null)
+      };
+
+      const original = String(file.originalname || '').toLowerCase();
+      const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(file.mimetype || '').toLowerCase());
+      const isDocx = original.endsWith('.docx') || /wordprocessingml/.test(String(file.mimetype || '').toLowerCase());
+      if (!isXlsx && !isDocx) {
+        return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
+      }
+
+      const outBuffer = isXlsx
+        ? await generateSolicitudXlsxFromTemplate(file.buffer, dto)
+        : await generateSolicitudDocxFromTemplate(file.buffer, dto);
+
+      const ext = isXlsx ? 'xlsx' : 'docx';
+      const filename = `cliente_${safeFileComponent(cliente.numero_identificacion || cliente.numero || cliente.id_cliente)}.${ext}`;
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader(
+        'Content-Type',
+        isXlsx
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(outBuffer);
+    } catch (err) {
+      const status = err?.status ? Number(err.status) : 500;
+      const message = err?.message || 'Error generando documento';
+      return res.status(Number.isFinite(status) ? status : 500).json({ message });
+    }
+  },
+  listarPlantillasDocumentoSolicitud: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoSolicitudesTable();
+      const [rows] = await pool.query(
+        `SELECT id, nombre, nombre_archivo, mime, size_bytes, usuario_id, fecha_subida
+         FROM plantillas_documento_solicitudes
+         ORDER BY fecha_subida DESC, id DESC`
+      );
+      return res.json(rows);
+    } catch (err) {
+      console.error('Error GET /solicitudes/documentos/plantillas:', err);
+      return res.status(500).json({ message: 'Error listando plantillas' });
+    }
+  },
+
+  subirPlantillaDocumentoSolicitud: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoSolicitudesTable();
+      const file = req.file;
+      if (!file || !file.buffer) return res.status(400).json({ message: 'Debe enviar el archivo template' });
+
+      const ext = getExtLower(file.originalname);
+      if (ext !== '.docx' && ext !== '.xlsx') {
+        return res.status(400).json({ message: 'Solo se permiten plantillas .xlsx o .docx' });
+      }
+
+      const nombreRaw = typeof (req.body || {}).nombre === 'string' ? String(req.body.nombre).trim() : '';
+      const nombre = nombreRaw ? nombreRaw : null;
+      const usuarioId = req.user && req.user.id ? Number(req.user.id) : null;
+      const sizeBytes = Number.isFinite(file.size) ? file.size : (file.buffer ? file.buffer.length : null);
+
+      const [result] = await pool.query(
+        `INSERT INTO plantillas_documento_solicitudes (nombre, nombre_archivo, mime, size_bytes, archivo, usuario_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          nombre,
+          String(file.originalname || 'template'),
+          file.mimetype || null,
+          sizeBytes,
+          file.buffer,
+          usuarioId
+        ]
+      );
+
+      return res.status(201).json({
+        id: result.insertId,
+        nombre,
+        nombre_archivo: String(file.originalname || 'template'),
+        mime: file.mimetype || null,
+        size_bytes: sizeBytes,
+        usuario_id: usuarioId,
+        fecha_subida: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error POST /solicitudes/documentos/plantillas:', err);
+      return res.status(500).json({ message: 'Error subiendo plantilla' });
+    }
+  },
+
+  eliminarPlantillaDocumentoSolicitud: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoSolicitudesTable();
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+
+      const [result] = await pool.query('DELETE FROM plantillas_documento_solicitudes WHERE id = ?', [id]);
+      if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Error DELETE /solicitudes/documentos/plantillas/:id:', err);
+      return res.status(500).json({ message: 'Error eliminando plantilla' });
+    }
+  },
+
+  generarDocumentoDesdePlantilla: async (req, res) => {
+    try {
+      await ensurePlantillasDocumentoSolicitudesTable();
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+
+      const solicitud_id = (req.body || {}).solicitud_id;
+      const id_cliente = (req.body || {}).id_cliente;
+      const hasSolicitud = Number.isFinite(Number(solicitud_id)) && Number(solicitud_id) > 0;
+      const hasCliente = Number.isFinite(Number(id_cliente)) && Number(id_cliente) > 0;
+      if (!hasSolicitud && !hasCliente) {
+        return res.status(400).json({ message: 'Debe enviar solicitud_id o id_cliente' });
+      }
+
+      const [rows] = await pool.query(
+        'SELECT nombre_archivo, mime, archivo FROM plantillas_documento_solicitudes WHERE id = ? LIMIT 1',
+        [id]
+      );
+      if (!rows || !rows.length) return res.status(404).json({ message: 'Plantilla no encontrada' });
+
+      const tpl = rows[0];
+      const original = String(tpl.nombre_archivo || '').toLowerCase();
+      const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(tpl.mime || '').toLowerCase());
+      const isDocx = original.endsWith('.docx') || /wordprocessingml/.test(String(tpl.mime || '').toLowerCase());
+      if (!isXlsx && !isDocx) {
+        return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
+      }
+
+      let dto = null;
+      if (hasSolicitud) {
+        dto = await fetchSolicitudDocumentoDTO({ solicitud_id: Number(solicitud_id) });
+        if (!dto || !dto.solicitud) return res.status(404).json({ message: 'Solicitud no encontrada' });
+      } else {
+        dto = {
+          solicitud: Object.create(null),
+          cliente: Object.create(null),
+          oferta: Object.create(null),
+          revision: Object.create(null),
+          seguimiento_encuesta: Object.create(null)
+        };
+      }
+
+      if (hasCliente) {
+        const cliente = await fetchClienteDTO({ id_cliente: Number(id_cliente) });
+        if (!cliente) return res.status(404).json({ message: 'Cliente no encontrado' });
+        dto.cliente = {
+          ...cliente,
+          ciudad_codigo: cliente.ciudad_codigo || cliente.id_ciudad,
+          departamento_codigo: cliente.departamento_codigo || cliente.id_departamento,
+          id_ciudad: cliente.ciudad || cliente.id_ciudad,
+          id_departamento: cliente.departamento || cliente.id_departamento
+        };
+      }
+
+      const outBuffer = isXlsx
+        ? await generateSolicitudXlsxFromTemplate(Buffer.from(tpl.archivo), dto)
+        : await generateSolicitudDocxFromTemplate(Buffer.from(tpl.archivo), dto);
+
+      const ext = isXlsx ? 'xlsx' : 'docx';
+      const base =
+        hasSolicitud && dto?.solicitud?.solicitud_id
+          ? `solicitud_${safeFileComponent(dto.solicitud.solicitud_id)}`
+          : `cliente_${safeFileComponent(dto?.cliente?.numero_identificacion || dto?.cliente?.numero || dto?.cliente?.id_cliente || id_cliente)}`;
+      const filename = `${base}.${ext}`;
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader(
+        'Content-Type',
+        isXlsx
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(outBuffer);
+    } catch (err) {
+      console.error('Error POST /solicitudes/documentos/plantillas/:id/generar:', err);
+      return res.status(500).json({ message: 'Error generando documento desde plantilla' });
     }
   }
 };

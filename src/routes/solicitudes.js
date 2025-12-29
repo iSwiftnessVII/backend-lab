@@ -15,6 +15,10 @@ router.get('/clientes/:id', solicitudesController.getClienteById);
 router.put('/clientes/:id', verifyToken, solicitudesController.updateCliente);
 router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente);
 router.post('/clientes/documentos/generar', verifyToken, upload.single('template'), solicitudesController.generarDocumentoCliente);
+router.get('/documentos/plantillas', verifyToken, solicitudesController.listarPlantillasDocumentoSolicitud);
+router.post('/documentos/plantillas', verifyToken, upload.single('template'), solicitudesController.subirPlantillaDocumentoSolicitud);
+router.delete('/documentos/plantillas/:id', verifyToken, solicitudesController.eliminarPlantillaDocumentoSolicitud);
+router.post('/documentos/plantillas/:id/generar', verifyToken, solicitudesController.generarDocumentoDesdePlantilla);
 
 // ---------- SOLICITUDES CRUD ----------
 router.get('/', solicitudesController.getSolicitudes);
