@@ -616,3 +616,51 @@ CREATE TABLE plantillas_documento_volumetricos (
     usuario_id BIGINT,
     fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+
+
+
+tablas añadidas despues
+
+-- Tabla: cert_analisis (certificados de análisis)
+CREATE TABLE cert_analisis (
+    id_certificado INT AUTO_INCREMENT PRIMARY KEY,
+    id_solicitud INT NOT NULL,
+    numero_certificado VARCHAR(50) NOT NULL,
+    fecha_emision DATE,
+    resultado TEXT,
+    observaciones TEXT,
+    archivo MEDIUMBLOB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_solicitud) REFERENCES Solicitudes(solicitud_id) ON DELETE CASCADE
+);
+
+-- Tabla: consumo_reactivos
+CREATE TABLE consumo_reactivos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lote VARCHAR(30) NOT NULL,
+    cantidad DECIMAL(10,2) NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario VARCHAR(100),
+    FOREIGN KEY (lote) REFERENCES reactivos(lote)
+);
+
+-- Tabla: hoja_seguridad
+CREATE TABLE hoja_seguridad (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lote VARCHAR(30) NOT NULL,
+    nombre_archivo VARCHAR(255) NOT NULL,
+    archivo MEDIUMBLOB NOT NULL,
+    fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (lote) REFERENCES reactivos(lote) ON DELETE CASCADE
+);
+
+-- Tabla: login
+CREATE TABLE login (
+    id_login INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    fecha_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_usuario VARCHAR(50),
+    dispositivo VARCHAR(100),
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+);
