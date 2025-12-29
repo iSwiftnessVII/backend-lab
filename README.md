@@ -1,6 +1,6 @@
 # app-lab-back
 
-Backend minimal para autenticación (Express) conectado a TiDB Cloud.
+Backend minimal para autenticación (Express) conectado a MySQL.
 
 Setup rápido
 
@@ -18,8 +18,7 @@ Setup rápido
 
 Notas
 
-- La conexión a la base de datos está en `db.js` y actualmente usa credenciales embebidas para desarrollo local. Reemplaza por variables de entorno en producción.
-- Asegúrate de que `certs/ca.pem` existe (ya incluido) para la conexión SSL a TiDB Cloud.
+- La conexión a la base de datos está en `src/config/db.js` y usa variables de entorno definidas en `.env`.
 - Endpoints:
   - POST /api/auth/register  { email, password } -> { token }
   - POST /api/auth/login     { email, password } -> { token }

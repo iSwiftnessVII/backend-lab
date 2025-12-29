@@ -45,14 +45,12 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Permitir sin origin (mobile apps, Postman, etc.), ngrok, Vercel, Render y Cloudflare Tunnel
+    // Permitir sin origin (mobile apps, Postman, etc.), ngrok, Vercel y Render
     if (!origin || 
         allowedOrigins.includes(origin) ||
         origin.includes('ngrok') ||
         origin.includes('vercel.app') ||
-        origin.includes('onrender.com') ||
-        origin.includes('trycloudflare.com') ||
-        origin.includes('pages.dev')) {
+        origin.includes('onrender.com')) {
       callback(null, true);
     } else {
       console.warn('❌ CORS blocked origin:', origin);
