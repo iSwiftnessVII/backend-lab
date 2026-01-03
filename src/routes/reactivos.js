@@ -86,9 +86,6 @@ router.post('/notificaciones/test', reactivosController.enviarNotificacionPrueba
 router.get('/alertas-proximas', reactivosController.listarAlertasProximas);
 
 // ========== GENERACIÓN DE DOCUMENTOS ==========
-// POST /api/reactivos/documentos/generar (multipart: template + {codigo, lote?})
-router.post('/documentos/generar', verifyToken, upload.single('template'), reactivosController.generarDocumentoReactivo);
-
 router.get('/documentos/plantillas', verifyToken, reactivosController.listarPlantillasDocumentoReactivo);
 router.post('/documentos/plantillas', verifyToken, upload.single('template'), reactivosController.subirPlantillaDocumentoReactivo);
 router.delete('/documentos/plantillas/:id', verifyToken, reactivosController.eliminarPlantillaDocumentoReactivo);

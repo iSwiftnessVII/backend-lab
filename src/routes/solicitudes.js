@@ -14,7 +14,6 @@ router.post('/clientes', verifyToken, solicitudesController.createCliente);
 router.get('/clientes/:id', solicitudesController.getClienteById);
 router.put('/clientes/:id', verifyToken, solicitudesController.updateCliente);
 router.delete('/clientes/:id', verifyToken, solicitudesController.deleteCliente);
-router.post('/clientes/documentos/generar', verifyToken, upload.single('template'), solicitudesController.generarDocumentoCliente);
 router.get('/documentos/plantillas', verifyToken, solicitudesController.listarPlantillasDocumentoSolicitud);
 router.post('/documentos/plantillas', verifyToken, upload.single('template'), solicitudesController.subirPlantillaDocumentoSolicitud);
 router.delete('/documentos/plantillas/:id', verifyToken, solicitudesController.eliminarPlantillaDocumentoSolicitud);
@@ -26,7 +25,6 @@ router.post('/', verifyToken, solicitudesController.createSolicitud);
 router.get('/:id', solicitudesController.getSolicitudById);
 router.put('/:id', verifyToken, solicitudesController.updateSolicitud);
 router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
-router.post('/documentos/generar', verifyToken, upload.single('template'), solicitudesController.generarDocumentoSolicitud);
 
 // Endpoints de detalle
 router.get('/detalle/lista', solicitudesController.getSolicitudesDetalle);
