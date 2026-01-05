@@ -5,6 +5,27 @@ const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 
+function templateHasReactivosLoop(templateBuffer) {
+  try {
+    const zip = new PizZip(templateBuffer);
+    const re = /{{\s*#reactivos\s*}}/i;
+    for (const name of Object.keys(zip.files || {})) {
+      const entry = zip.files[name];
+      if (!entry || entry.dir) continue;
+      let text = '';
+      try {
+        text = zip.file(name)?.asText() || '';
+      } catch {
+        text = '';
+      }
+      if (text && re.test(text)) return true;
+    }
+  } catch {
+    // ignore; treat as no-loop
+  }
+  return false;
+}
+
 // Helpers
 function likeParam(q) {
   return `%${(q || '').toLowerCase()}%`;
@@ -144,6 +165,66 @@ async function fetchReactivoDTO({ codigo, lote }) {
   return reactivo;
 }
 
+async function fetchReactivosLoopDTO({ limit } = {}) {
+  const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(20000, Number(limit)) : 5000;
+  const [rows] = await pool.query(
+    `
+      SELECT
+        r.codigo,
+        r.nombre,
+        r.marca,
+        r.lote,
+        r.referencia,
+        r.cas,
+        r.presentacion,
+        r.cantidad_total,
+        r.fecha_adquisicion,
+        r.fecha_vencimiento,
+        tr.nombre AS tipo,
+        cs.nombre AS clasificacion,
+        u.nombre AS unidad_simbolo,
+        u.nombre AS unidad,
+        ef.nombre AS estado,
+        a.nombre AS almacenamiento,
+        trc.nombre AS tipo_recipiente
+      FROM reactivos r
+      JOIN catalogo_reactivos c ON c.codigo = r.codigo
+      LEFT JOIN tipo_reactivo tr ON tr.id = r.tipo_id
+      LEFT JOIN clasificacion_sga cs ON cs.id = r.clasificacion_id
+      LEFT JOIN unidades u ON u.id = r.unidad_id
+      LEFT JOIN estado_fisico ef ON ef.id = r.estado_id
+      LEFT JOIN almacenamiento a ON a.id = r.almacenamiento_id
+      LEFT JOIN tipo_recipiente trc ON trc.id = r.tipo_recipiente_id
+      WHERE r.activo = 1
+      ORDER BY r.fecha_creacion DESC
+      LIMIT ?
+    `,
+    [lim]
+  );
+
+  return (rows || []).map((row) => {
+    const reactivo = Object.create(null);
+    reactivo.codigo = valueToText(row.codigo);
+    reactivo.nombre = valueToText(row.nombre);
+    reactivo.marca = valueToText(row.marca);
+    reactivo.lote = valueToText(row.lote);
+    reactivo.referencia = valueToText(row.referencia);
+    reactivo.cas = valueToText(row.cas);
+    reactivo.presentacion = row.presentacion ?? '';
+    reactivo.cantidad_total = row.cantidad_total ?? '';
+    reactivo.fecha_adquisicion = formatDateYMD(row.fecha_adquisicion);
+    reactivo.fecha_vencimiento = formatDateYMD(row.fecha_vencimiento);
+    reactivo.tipo = valueToText(row.tipo);
+    reactivo.clasificacion = valueToText(row.clasificacion);
+    reactivo.unidad = valueToText(row.unidad);
+    reactivo.unidad_simbolo = valueToText(row.unidad_simbolo || row.unidad);
+    reactivo.estado = valueToText(row.estado);
+    reactivo.almacenamiento = valueToText(row.almacenamiento);
+    reactivo.tipo_recipiente = valueToText(row.tipo_recipiente);
+    return reactivo;
+  });
+}
+
 function collectTagsFromText(text) {
   const s = String(text ?? '');
   const tags = new Set();
@@ -160,25 +241,160 @@ function validateTags(tags) {
   const invalid = [];
   for (const tag of tags) {
     const t = String(tag || '').trim();
-    const m = /^reactivo\.([A-Za-z0-9_]+)$/.exec(t);
+    if (t === '#reactivos' || t === '/reactivos') continue;
+
+    const m = /^(reactivo|reactivos)\.([A-Za-z0-9_]+)$/.exec(t);
     if (!m) {
       invalid.push(t);
       continue;
     }
-    const field = m[1];
+    const field = m[2];
     if (!ALLOWED_REACTIVO_FIELDS.has(field)) invalid.push(t);
   }
   return invalid;
 }
 
-function replaceExcelText(text, reactivo) {
-  return String(text ?? '').replace(/{{\s*reactivo\.([A-Za-z0-9_]+)\s*}}/g, (_, field) => {
-    if (!ALLOWED_REACTIVO_FIELDS.has(field)) return '';
-    return valueToText(reactivo[field]);
+function replaceExcelText(text, dto, ctx) {
+  return String(text ?? '').replace(/{{\s*(reactivo|reactivos)\.([A-Za-z0-9_]+)\s*}}/g, (_, scope, field) => {
+    const s = String(scope || '').trim();
+    const f = String(field || '').trim();
+    if (!ALLOWED_REACTIVO_FIELDS.has(f)) return '';
+    const src = ctx && ctx[s] ? ctx[s] : (dto && dto[s] ? dto[s] : null);
+    return src ? valueToText(src[f]) : '';
   });
 }
 
-async function generateXlsxFromTemplate(templateBuffer, reactivo) {
+function clonePlain(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function snapshotRowForTemplate(row, maxCol) {
+  const snap = {
+    height: row.height,
+    hidden: row.hidden,
+    outlineLevel: row.outlineLevel,
+    style: clonePlain(row.style),
+    cells: new Array((maxCol || 0) + 1)
+  };
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const cell = row.getCell(col);
+    snap.cells[col] = {
+      value: clonePlain(cell.value),
+      style: clonePlain(cell.style)
+    };
+  }
+  return snap;
+}
+
+function replaceCellValue(value, dto, ctx) {
+  if (typeof value === 'string') return replaceExcelText(value, dto, ctx);
+  if (value && typeof value === 'object' && Array.isArray(value.richText)) {
+    const cloned = clonePlain(value) || {};
+    if (cloned && Array.isArray(cloned.richText)) {
+      cloned.richText = cloned.richText.map((part) => ({
+        ...part,
+        text: replaceExcelText(part?.text, dto, ctx)
+      }));
+    }
+    return cloned;
+  }
+  return value;
+}
+
+function rowHasMarker(row, marker, maxCol) {
+  const m = String(marker || '');
+  if (!m) return false;
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const v = row.getCell(col).value;
+    if (typeof v === 'string' && v.includes(m)) return true;
+    if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+      for (const part of v.richText) {
+        if (typeof part?.text === 'string' && part.text.includes(m)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function applyExcelLoop(sheet, loopName, items, dto) {
+  const startMarker = `{{#${loopName}}}`;
+  const endMarker = `{{/${loopName}}}`;
+  const maxCol = Math.max(1, sheet.columnCount || 1);
+
+  while (true) {
+    let startRow = null;
+    let endRow = null;
+    for (let i = 1; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+      if (startRow === null) {
+        if (rowHasMarker(row, startMarker, maxCol)) startRow = i;
+      } else {
+        if (rowHasMarker(row, endMarker, maxCol)) { endRow = i; break; }
+      }
+    }
+    if (startRow === null || endRow === null || endRow <= startRow) break;
+
+    const templateStart = startRow + 1;
+    const templateEnd = endRow - 1;
+    const templateCount = templateEnd >= templateStart ? (templateEnd - templateStart + 1) : 0;
+    const templateSnaps = [];
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      templateSnaps.push(snapshotRowForTemplate(sheet.getRow(rowNum), maxCol));
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      if (templateCount > 0) sheet.spliceRows(templateStart, templateCount);
+      const endRowNow = endRow - templateCount;
+      sheet.spliceRows(endRowNow, 1);
+      sheet.spliceRows(startRow, 1);
+      continue;
+    }
+
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      const row = sheet.getRow(rowNum);
+      const snap = templateSnaps[r];
+      for (let col = 1; col <= maxCol; col++) {
+        row.getCell(col).value = replaceCellValue(snap.cells[col]?.value, dto, { [loopName]: items[0] });
+      }
+    }
+
+    let endMarkerRow = endRow;
+    for (let i = 1; i < items.length; i++) {
+      for (let r = 0; r < templateCount; r++) {
+        const snap = templateSnaps[r];
+        const values = new Array(maxCol + 1);
+        for (let col = 1; col <= maxCol; col++) values[col] = clonePlain(snap.cells[col]?.value);
+        const newRow = sheet.insertRow(endMarkerRow, values);
+        newRow.height = snap.height;
+        newRow.hidden = snap.hidden;
+        newRow.outlineLevel = snap.outlineLevel;
+        newRow.style = clonePlain(snap.style);
+        for (let col = 1; col <= maxCol; col++) {
+          const newCell = newRow.getCell(col);
+          newCell.style = clonePlain(snap.cells[col]?.style);
+          newCell.value = replaceCellValue(snap.cells[col]?.value, dto, { [loopName]: items[i] });
+        }
+        endMarkerRow++;
+      }
+    }
+
+    sheet.spliceRows(endMarkerRow, 1);
+    sheet.spliceRows(startRow, 1);
+  }
+}
+
+async function generateXlsxFromTemplate(templateBuffer, data) {
+  const dto = data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, 'reactivo')
+    ? data
+    : { reactivo: data || Object.create(null) };
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 
@@ -206,17 +422,18 @@ async function generateXlsxFromTemplate(templateBuffer, reactivo) {
   }
 
   workbook.eachSheet((sheet) => {
+    applyExcelLoop(sheet, 'reactivos', dto?.reactivos, dto);
     sheet.eachRow((row) => {
       row.eachCell((cell) => {
         const v = cell.value;
         if (typeof v === 'string') {
-          cell.value = replaceExcelText(v, reactivo);
+          cell.value = replaceExcelText(v, dto, null);
         } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
           cell.value = {
             ...v,
             richText: v.richText.map((part) => ({
               ...part,
-              text: replaceExcelText(part?.text, reactivo)
+              text: replaceExcelText(part?.text, dto, null)
             }))
           };
         }
@@ -229,29 +446,52 @@ async function generateXlsxFromTemplate(templateBuffer, reactivo) {
 }
 
 function docxSafeParser(tag) {
-  const raw = String(tag ?? '').trim();
-  if (!raw) return { get: () => '' };
-  const m = /^reactivo\.([A-Za-z0-9_]+)$/.exec(raw);
+  const raw0 = String(tag ?? '').trim();
+  if (!raw0) return { get: () => '' };
+  if (/^#reactivos$/.test(raw0) || /^\/reactivos$/.test(raw0)) return { get: () => '' };
+
+  const raw = raw0.replace(/^[#/^]+/, '').trim();
+  if (/^[A-Za-z0-9_]+$/.test(raw)) {
+    const key = raw;
+    if (!ALLOWED_REACTIVO_FIELDS.has(key)) {
+      const e = new Error('Llave no permitida: ' + raw0);
+      e.status = 400;
+      throw e;
+    }
+    return {
+      get: (scope) => {
+        if (!scope || typeof scope !== 'object') return '';
+        if (!Object.prototype.hasOwnProperty.call(scope, key)) return '';
+        return scope[key];
+      }
+    };
+  }
+
+  const m = /^(reactivo|reactivos)\.([A-Za-z0-9_]+)$/.exec(raw);
   if (!m) {
-    const e = new Error('Llave no permitida: ' + raw);
+    const e = new Error('Llave no permitida: ' + raw0);
     e.status = 400;
     throw e;
   }
-  const field = m[1];
+  const field = m[2];
   if (!ALLOWED_REACTIVO_FIELDS.has(field)) {
-    const e = new Error('Llave no permitida: ' + raw);
+    const e = new Error('Llave no permitida: ' + raw0);
     e.status = 400;
     throw e;
   }
+  const scopeName = m[1];
   return {
     get: (scope) => {
-      const r = scope && scope.reactivo ? scope.reactivo : null;
+      const r = scope && scope[scopeName] ? scope[scopeName] : null;
       return r ? r[field] : '';
     }
   };
 }
 
-async function generateDocxFromTemplate(templateBuffer, reactivo) {
+async function generateDocxFromTemplate(templateBuffer, data) {
+  const dto = data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, 'reactivo')
+    ? data
+    : { reactivo: data || Object.create(null) };
   const zip = new PizZip(templateBuffer);
   const doc = new Docxtemplater(zip, {
     paragraphLoop: true,
@@ -260,7 +500,7 @@ async function generateDocxFromTemplate(templateBuffer, reactivo) {
     nullGetter: () => ''
   });
 
-  doc.setData({ reactivo });
+  doc.setData(dto);
   try {
     doc.render();
   } catch (err) {
@@ -1371,7 +1611,8 @@ deleteCatalogo: async (req, res) => {
 
       const codigo = String((req.body || {}).codigo || '').trim();
       const lote = String((req.body || {}).lote || '').trim();
-      if (!codigo && !lote) {
+      const todos = !!(req.body || {}).todos;
+      if (!todos && !codigo && !lote) {
         return res.status(400).json({ message: 'Debe enviar codigo (y opcionalmente lote)' });
       }
 
@@ -1382,7 +1623,7 @@ deleteCatalogo: async (req, res) => {
       if (!rows || !rows.length) return res.status(404).json({ message: 'Plantilla no encontrada' });
 
       const tpl = rows[0];
-      req.body = { ...req.body, codigo, lote: lote || undefined };
+      req.body = { ...req.body, codigo: codigo || undefined, lote: lote || undefined, todos: todos || undefined };
       req.file = {
         buffer: tpl.archivo,
         originalname: tpl.nombre_archivo,
@@ -1406,14 +1647,7 @@ deleteCatalogo: async (req, res) => {
 
       const codigo = String((req.body || {}).codigo || '').trim();
       const lote = String((req.body || {}).lote || '').trim();
-      if (!codigo && !lote) {
-        return res.status(400).json({ message: 'Debe enviar codigo (y opcionalmente lote)' });
-      }
-
-      const reactivo = await fetchReactivoDTO({ codigo, lote });
-      if (!reactivo) {
-        return res.status(404).json({ message: 'Reactivo no encontrado' });
-      }
+      let dto = null;
 
       const original = String(file.originalname || '').toLowerCase();
       const isXlsx = original.endsWith('.xlsx') || /spreadsheetml/.test(String(file.mimetype || '').toLowerCase());
@@ -1422,12 +1656,30 @@ deleteCatalogo: async (req, res) => {
         return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
       }
 
+      // Regla A: el template manda. Si hay loop #reactivos, generar para todos; si no, requiere selección.
+      const todos = templateHasReactivosLoop(file.buffer);
+      if (!todos && !codigo && !lote) {
+        return res.status(400).json({ message: 'Debe enviar codigo (y opcionalmente lote)' });
+      }
+
+      if (todos) {
+        dto = { reactivo: Object.create(null), reactivos: await fetchReactivosLoopDTO() };
+      } else {
+        const reactivo = await fetchReactivoDTO({ codigo, lote });
+        if (!reactivo) {
+          return res.status(404).json({ message: 'Reactivo no encontrado' });
+        }
+        dto = { reactivo };
+      }
+
       const outBuffer = isXlsx
-        ? await generateXlsxFromTemplate(file.buffer, reactivo)
-        : await generateDocxFromTemplate(file.buffer, reactivo);
+        ? await generateXlsxFromTemplate(file.buffer, dto)
+        : await generateDocxFromTemplate(file.buffer, dto);
 
       const ext = isXlsx ? 'xlsx' : 'docx';
-      const filename = `reactivo_${safeFileComponent(reactivo.codigo)}_${safeFileComponent(reactivo.lote)}.${ext}`;
+      const filename = todos
+        ? `reactivos.${ext}`
+        : `reactivo_${safeFileComponent(dto.reactivo.codigo)}_${safeFileComponent(dto.reactivo.lote)}.${ext}`;
 
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader(

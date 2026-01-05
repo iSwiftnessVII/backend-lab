@@ -5,6 +5,39 @@ const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 
+function detectSolicitudesLoopEntity(templateBuffer) {
+  try {
+    const zip = new PizZip(templateBuffer);
+    const reSolicitudes = /{{\s*#solicitudes\s*}}/i;
+    const reClientes = /{{\s*#clientes\s*}}/i;
+
+    let hasSolicitudes = false;
+    let hasClientes = false;
+
+    for (const name of Object.keys(zip.files || {})) {
+      const entry = zip.files[name];
+      if (!entry || entry.dir) continue;
+      let text = '';
+      try {
+        text = zip.file(name)?.asText() || '';
+      } catch {
+        text = '';
+      }
+      if (!text) continue;
+      if (!hasSolicitudes && reSolicitudes.test(text)) hasSolicitudes = true;
+      if (!hasClientes && reClientes.test(text)) hasClientes = true;
+      if (hasSolicitudes && hasClientes) break;
+    }
+
+    if (hasSolicitudes && hasClientes) return 'ambos';
+    if (hasSolicitudes) return 'solicitud';
+    if (hasClientes) return 'cliente';
+  } catch {
+    // ignore; treat as no-loop
+  }
+  return null;
+}
+
 async function sendMail(to, subject, text, html) {
   if (!nodemailer) {
     console.log(`[email] nodemailer no disponible; simulando envío: to=${to} subject="${subject}"`);
@@ -245,6 +278,131 @@ async function fetchClienteDTO({ id_cliente, numero_identificacion, numero }) {
   return cliente;
 }
 
+async function fetchClientesLoopDTO({ limit } = {}) {
+  const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(20000, Number(limit)) : 5000;
+  const [rows] = await pool.query(
+    `
+      SELECT
+        c.id_cliente,
+        c.numero,
+        c.fecha_vinculacion,
+        c.tipo_usuario,
+        c.razon_social,
+        c.nit,
+        c.nombre_solicitante,
+        c.tipo_identificacion,
+        c.numero_identificacion,
+        c.sexo,
+        c.tipo_poblacion,
+        c.direccion,
+        c.id_ciudad,
+        c.id_departamento,
+        ci.nombre AS ciudad,
+        d.nombre AS departamento,
+        c.celular,
+        c.telefono,
+        c.correo_electronico,
+        c.tipo_vinculacion,
+        c.registro_realizado_por,
+        c.observaciones,
+        c.activo,
+        c.created_at,
+        c.updated_at
+      FROM clientes c
+      LEFT JOIN ciudades ci ON ci.codigo = c.id_ciudad
+      LEFT JOIN departamentos d ON d.codigo = c.id_departamento
+      WHERE c.activo = 1
+      ORDER BY c.id_cliente DESC
+      LIMIT ?
+    `,
+    [lim]
+  );
+
+  return (rows || []).map((row) => {
+    const cliente = Object.create(null);
+    cliente.id_cliente = valueToText(row.id_cliente);
+    cliente.numero = valueToText(row.numero);
+    cliente.fecha_vinculacion = formatDateYMD(row.fecha_vinculacion);
+    cliente.tipo_usuario = valueToText(row.tipo_usuario);
+    cliente.razon_social = valueToText(row.razon_social);
+    cliente.nit = valueToText(row.nit);
+    cliente.nombre_solicitante = valueToText(row.nombre_solicitante);
+    cliente.tipo_identificacion = valueToText(row.tipo_identificacion);
+    cliente.numero_identificacion = valueToText(row.numero_identificacion);
+    cliente.sexo = valueToText(row.sexo);
+    cliente.tipo_poblacion = valueToText(row.tipo_poblacion);
+    cliente.direccion = valueToText(row.direccion);
+    cliente.id_ciudad = valueToText(row.id_ciudad);
+    cliente.id_departamento = valueToText(row.id_departamento);
+    cliente.ciudad_codigo = valueToText(row.id_ciudad);
+    cliente.departamento_codigo = valueToText(row.id_departamento);
+    cliente.ciudad = valueToText(row.ciudad);
+    cliente.departamento = valueToText(row.departamento);
+    cliente.celular = valueToText(row.celular);
+    cliente.telefono = valueToText(row.telefono);
+    cliente.correo_electronico = valueToText(row.correo_electronico);
+    cliente.tipo_vinculacion = valueToText(row.tipo_vinculacion);
+    cliente.registro_realizado_por = valueToText(row.registro_realizado_por);
+    cliente.observaciones = valueToText(row.observaciones);
+    cliente.activo = boolToSiNo(row.activo);
+    cliente.created_at = formatDateTime(row.created_at);
+    cliente.updated_at = formatDateTime(row.updated_at);
+    return cliente;
+  });
+}
+
+async function fetchSolicitudesLoopDTO({ limit } = {}) {
+  const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(20000, Number(limit)) : 5000;
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.solicitud_id,
+        s.id_cliente,
+        s.tipo_solicitud,
+        s.nombre_muestra,
+        s.fecha_solicitud,
+        s.lote_producto,
+        s.fecha_vencimiento_muestra,
+        s.tipo_muestra,
+        s.tipo_empaque,
+        s.analisis_requerido,
+        s.req_analisis,
+        s.cant_muestras,
+        s.solicitud_recibida,
+        s.fecha_entrega_muestra,
+        s.recibe_personal,
+        s.cargo_personal,
+        s.observaciones
+      FROM Solicitudes s
+      ORDER BY s.solicitud_id DESC
+      LIMIT ?
+    `,
+    [lim]
+  );
+
+  return (rows || []).map((row) => {
+    const solicitud = Object.create(null);
+    solicitud.solicitud_id = valueToText(row.solicitud_id);
+    solicitud.id_cliente = valueToText(row.id_cliente);
+    solicitud.tipo_solicitud = valueToText(row.tipo_solicitud);
+    solicitud.nombre_muestra = valueToText(row.nombre_muestra);
+    solicitud.fecha_solicitud = formatDateYMD(row.fecha_solicitud);
+    solicitud.lote_producto = valueToText(row.lote_producto);
+    solicitud.fecha_vencimiento_muestra = formatDateYMD(row.fecha_vencimiento_muestra);
+    solicitud.tipo_muestra = valueToText(row.tipo_muestra);
+    solicitud.tipo_empaque = valueToText(row.tipo_empaque);
+    solicitud.analisis_requerido = valueToText(row.analisis_requerido);
+    solicitud.req_analisis = boolToSiNo(row.req_analisis);
+    solicitud.cant_muestras = valueToText(row.cant_muestras);
+    solicitud.solicitud_recibida = valueToText(row.solicitud_recibida);
+    solicitud.fecha_entrega_muestra = formatDateYMD(row.fecha_entrega_muestra);
+    solicitud.recibe_personal = valueToText(row.recibe_personal);
+    solicitud.cargo_personal = valueToText(row.cargo_personal);
+    solicitud.observaciones = valueToText(row.observaciones);
+    return solicitud;
+  });
+}
+
 async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
   const idNorm = String(solicitud_id ?? '').trim();
   if (!idNorm) return null;
@@ -399,7 +557,9 @@ function validateSolicitudDocTags(tags) {
   const invalid = [];
   for (const tag of tags) {
     const t = String(tag || '').trim();
-    const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)$/.exec(t);
+    if (t === '#clientes' || t === '/clientes' || t === '#solicitudes' || t === '/solicitudes') continue;
+
+    const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta|clientes|solicitudes)\.([A-Za-z0-9_]+)$/.exec(t);
     if (!m) {
       invalid.push(t);
       continue;
@@ -407,8 +567,8 @@ function validateSolicitudDocTags(tags) {
     const scope = m[1];
     const field = m[2];
     const ok =
-      (scope === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(field)) ||
-      (scope === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
+      ((scope === 'cliente' || scope === 'clientes') && ALLOWED_CLIENTE_FIELDS.has(field)) ||
+      ((scope === 'solicitud' || scope === 'solicitudes') && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
       (scope === 'oferta' && ALLOWED_OFERTA_FIELDS.has(field)) ||
       (scope === 'revision' && ALLOWED_REVISION_FIELDS.has(field)) ||
       (scope === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(field));
@@ -417,23 +577,150 @@ function validateSolicitudDocTags(tags) {
   return invalid;
 }
 
-function replaceExcelSolicitudDocText(text, data) {
+function replaceExcelSolicitudDocText(text, data, ctx) {
   return String(text ?? '').replace(
-    /{{\s*(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)\s*}}/g,
+    /{{\s*(cliente|solicitud|oferta|revision|seguimiento_encuesta|clientes|solicitudes)\.([A-Za-z0-9_]+)\s*}}/g,
     (_, scope, field) => {
       const s = String(scope || '').trim();
       const f = String(field || '').trim();
       const allowed =
-        (s === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(f)) ||
-        (s === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(f)) ||
+        ((s === 'cliente' || s === 'clientes') && ALLOWED_CLIENTE_FIELDS.has(f)) ||
+        ((s === 'solicitud' || s === 'solicitudes') && ALLOWED_SOLICITUD_FIELDS.has(f)) ||
         (s === 'oferta' && ALLOWED_OFERTA_FIELDS.has(f)) ||
         (s === 'revision' && ALLOWED_REVISION_FIELDS.has(f)) ||
         (s === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(f));
       if (!allowed) return '';
-      const src = data && data[s] ? data[s] : null;
+      const src = ctx && ctx[s] ? ctx[s] : (data && data[s] ? data[s] : null);
       return src ? valueToText(src[f]) : '';
     }
   );
+}
+
+function clonePlain(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function snapshotRowForTemplate(row, maxCol) {
+  const snap = {
+    height: row.height,
+    hidden: row.hidden,
+    outlineLevel: row.outlineLevel,
+    style: clonePlain(row.style),
+    cells: new Array((maxCol || 0) + 1)
+  };
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const cell = row.getCell(col);
+    snap.cells[col] = {
+      value: clonePlain(cell.value),
+      style: clonePlain(cell.style)
+    };
+  }
+  return snap;
+}
+
+function replaceSolicitudDocCellValue(value, dto, ctx) {
+  if (typeof value === 'string') return replaceExcelSolicitudDocText(value, dto, ctx);
+  if (value && typeof value === 'object' && Array.isArray(value.richText)) {
+    const cloned = clonePlain(value) || {};
+    if (cloned && Array.isArray(cloned.richText)) {
+      cloned.richText = cloned.richText.map((part) => ({
+        ...part,
+        text: replaceExcelSolicitudDocText(part?.text, dto, ctx)
+      }));
+    }
+    return cloned;
+  }
+  return value;
+}
+
+function rowHasMarker(row, marker, maxCol) {
+  const m = String(marker || '');
+  if (!m) return false;
+  for (let col = 1; col <= (maxCol || 0); col++) {
+    const v = row.getCell(col).value;
+    if (typeof v === 'string' && v.includes(m)) return true;
+    if (v && typeof v === 'object' && Array.isArray(v.richText)) {
+      for (const part of v.richText) {
+        if (typeof part?.text === 'string' && part.text.includes(m)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function applyExcelLoop(sheet, loopName, items, dto) {
+  const startMarker = `{{#${loopName}}}`;
+  const endMarker = `{{/${loopName}}}`;
+  const maxCol = Math.max(1, sheet.columnCount || 1);
+
+  while (true) {
+    let startRow = null;
+    let endRow = null;
+    for (let i = 1; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+      if (startRow === null) {
+        if (rowHasMarker(row, startMarker, maxCol)) startRow = i;
+      } else {
+        if (rowHasMarker(row, endMarker, maxCol)) { endRow = i; break; }
+      }
+    }
+    if (startRow === null || endRow === null || endRow <= startRow) break;
+
+    const templateStart = startRow + 1;
+    const templateEnd = endRow - 1;
+    const templateCount = templateEnd >= templateStart ? (templateEnd - templateStart + 1) : 0;
+    const templateSnaps = [];
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      templateSnaps.push(snapshotRowForTemplate(sheet.getRow(rowNum), maxCol));
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      if (templateCount > 0) sheet.spliceRows(templateStart, templateCount);
+      const endRowNow = endRow - templateCount;
+      sheet.spliceRows(endRowNow, 1);
+      sheet.spliceRows(startRow, 1);
+      continue;
+    }
+
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      const row = sheet.getRow(rowNum);
+      const snap = templateSnaps[r];
+      for (let col = 1; col <= maxCol; col++) {
+        row.getCell(col).value = replaceSolicitudDocCellValue(snap.cells[col]?.value, dto, { [loopName]: items[0] });
+      }
+    }
+
+    let endMarkerRow = endRow;
+    for (let i = 1; i < items.length; i++) {
+      for (let r = 0; r < templateCount; r++) {
+        const snap = templateSnaps[r];
+        const values = new Array(maxCol + 1);
+        for (let col = 1; col <= maxCol; col++) values[col] = clonePlain(snap.cells[col]?.value);
+        const newRow = sheet.insertRow(endMarkerRow, values);
+        newRow.height = snap.height;
+        newRow.hidden = snap.hidden;
+        newRow.outlineLevel = snap.outlineLevel;
+        newRow.style = clonePlain(snap.style);
+        for (let col = 1; col <= maxCol; col++) {
+          const newCell = newRow.getCell(col);
+          newCell.style = clonePlain(snap.cells[col]?.style);
+          newCell.value = replaceSolicitudDocCellValue(snap.cells[col]?.value, dto, { [loopName]: items[i] });
+        }
+        endMarkerRow++;
+      }
+    }
+
+    sheet.spliceRows(endMarkerRow, 1);
+    sheet.spliceRows(startRow, 1);
+  }
 }
 
 async function generateSolicitudXlsxFromTemplate(templateBuffer, data) {
@@ -464,17 +751,19 @@ async function generateSolicitudXlsxFromTemplate(templateBuffer, data) {
   }
 
   workbook.eachSheet((sheet) => {
+    applyExcelLoop(sheet, 'clientes', data?.clientes, data);
+    applyExcelLoop(sheet, 'solicitudes', data?.solicitudes, data);
     sheet.eachRow((row) => {
       row.eachCell((cell) => {
         const v = cell.value;
         if (typeof v === 'string') {
-          cell.value = replaceExcelSolicitudDocText(v, data);
+          cell.value = replaceExcelSolicitudDocText(v, data, null);
         } else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
           cell.value = {
             ...v,
             richText: v.richText.map((part) => ({
               ...part,
-              text: replaceExcelSolicitudDocText(part?.text, data)
+              text: replaceExcelSolicitudDocText(part?.text, data, null)
             }))
           };
         }
@@ -487,27 +776,54 @@ async function generateSolicitudXlsxFromTemplate(templateBuffer, data) {
 }
 
 function docxSolicitudDocSafeParser(tag) {
-  const raw = String(tag ?? '').trim();
-  if (!raw) return { get: () => '' };
-  const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta)\.([A-Za-z0-9_]+)$/.exec(raw);
+  const raw0 = String(tag ?? '').trim();
+  if (!raw0) return { get: () => '' };
+  if (/^#(clientes|solicitudes)$/.test(raw0) || /^\/(clientes|solicitudes)$/.test(raw0)) return { get: () => '' };
+
+  const raw = raw0.replace(/^[#/^]+/, '').trim();
+  if (/^[A-Za-z0-9_]+$/.test(raw)) {
+    const key = raw;
+    const allowedKey =
+      ALLOWED_CLIENTE_FIELDS.has(key) ||
+      ALLOWED_SOLICITUD_FIELDS.has(key) ||
+      ALLOWED_OFERTA_FIELDS.has(key) ||
+      ALLOWED_REVISION_FIELDS.has(key) ||
+      ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(key);
+    if (!allowedKey) {
+      const e = new Error('Llave no permitida: ' + raw0);
+      e.status = 400;
+      throw e;
+    }
+    return {
+      get: (scopeData) => {
+        if (!scopeData || typeof scopeData !== 'object') return '';
+        if (!Object.prototype.hasOwnProperty.call(scopeData, key)) return '';
+        return scopeData[key];
+      }
+    };
+  }
+
+  const m = /^(cliente|solicitud|oferta|revision|seguimiento_encuesta|clientes|solicitudes)\.([A-Za-z0-9_]+)$/.exec(raw);
   if (!m) {
-    const e = new Error('Llave no permitida: ' + raw);
+    const e = new Error('Llave no permitida: ' + raw0);
     e.status = 400;
     throw e;
   }
+
   const scope = m[1];
   const field = m[2];
   const allowed =
-    (scope === 'cliente' && ALLOWED_CLIENTE_FIELDS.has(field)) ||
-    (scope === 'solicitud' && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
+    ((scope === 'cliente' || scope === 'clientes') && ALLOWED_CLIENTE_FIELDS.has(field)) ||
+    ((scope === 'solicitud' || scope === 'solicitudes') && ALLOWED_SOLICITUD_FIELDS.has(field)) ||
     (scope === 'oferta' && ALLOWED_OFERTA_FIELDS.has(field)) ||
     (scope === 'revision' && ALLOWED_REVISION_FIELDS.has(field)) ||
     (scope === 'seguimiento_encuesta' && ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS.has(field));
   if (!allowed) {
-    const e = new Error('Llave no permitida: ' + raw);
+    const e = new Error('Llave no permitida: ' + raw0);
     e.status = 400;
     throw e;
   }
+
   return {
     get: (scopeData) => {
       const obj = scopeData && scopeData[scope] ? scopeData[scope] : null;
@@ -2050,13 +2366,12 @@ const solicitudesController = {
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
 
-      const solicitud_id = (req.body || {}).solicitud_id;
-      const id_cliente = (req.body || {}).id_cliente;
+      const body = req.body || {};
+      const solicitud_id = body.solicitud_id;
+      const id_cliente = body.id_cliente;
+      const entidadRaw = String(body.entidad || '').trim().toLowerCase();
       const hasSolicitud = Number.isFinite(Number(solicitud_id)) && Number(solicitud_id) > 0;
       const hasCliente = Number.isFinite(Number(id_cliente)) && Number(id_cliente) > 0;
-      if (!hasSolicitud && !hasCliente) {
-        return res.status(400).json({ message: 'Debe enviar solicitud_id o id_cliente' });
-      }
 
       const [rows] = await pool.query(
         'SELECT nombre_archivo, mime, archivo FROM plantillas_documento_solicitudes WHERE id = ? LIMIT 1',
@@ -2072,21 +2387,42 @@ const solicitudesController = {
         return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
       }
 
-      let dto = null;
-      if (hasSolicitud) {
-        dto = await fetchSolicitudDocumentoDTO({ solicitud_id: Number(solicitud_id) });
-        if (!dto || !dto.solicitud) return res.status(404).json({ message: 'Solicitud no encontrada' });
-      } else {
-        dto = {
-          solicitud: Object.create(null),
-          cliente: Object.create(null),
-          oferta: Object.create(null),
-          revision: Object.create(null),
-          seguimiento_encuesta: Object.create(null)
-        };
+      // Regla A: el template manda. Si hay loop, generamos "todos" de esa entidad.
+      const loopEntity = detectSolicitudesLoopEntity(Buffer.from(tpl.archivo));
+      if (loopEntity === 'ambos') {
+        return res.status(400).json({ message: 'La plantilla contiene loops de clientes y solicitudes; use solo uno' });
+      }
+      const todos = loopEntity === 'cliente' || loopEntity === 'solicitud';
+      if (!todos && !hasSolicitud && !hasCliente) {
+        return res.status(400).json({ message: 'Debe enviar solicitud_id o id_cliente' });
       }
 
-      if (hasCliente) {
+      let dto = {
+        solicitud: Object.create(null),
+        cliente: Object.create(null),
+        oferta: Object.create(null),
+        revision: Object.create(null),
+        seguimiento_encuesta: Object.create(null)
+      };
+
+      let entidad = entidadRaw;
+      if (todos) {
+        if (loopEntity === 'cliente' || loopEntity === 'solicitud') {
+          entidad = loopEntity;
+        }
+        if (entidad !== 'cliente' && entidad !== 'solicitud') entidad = 'solicitud';
+        if (entidad === 'cliente') {
+          dto.clientes = await fetchClientesLoopDTO();
+        } else {
+          dto.solicitudes = await fetchSolicitudesLoopDTO();
+        }
+      } else if (hasSolicitud) {
+        const fullDto = await fetchSolicitudDocumentoDTO({ solicitud_id: Number(solicitud_id) });
+        if (!fullDto || !fullDto.solicitud) return res.status(404).json({ message: 'Solicitud no encontrada' });
+        dto = fullDto;
+      }
+
+      if (!todos && hasCliente) {
         const cliente = await fetchClienteDTO({ id_cliente: Number(id_cliente) });
         if (!cliente) return res.status(404).json({ message: 'Cliente no encontrado' });
         dto.cliente = {
@@ -2103,10 +2439,11 @@ const solicitudesController = {
         : await generateSolicitudDocxFromTemplate(Buffer.from(tpl.archivo), dto);
 
       const ext = isXlsx ? 'xlsx' : 'docx';
-      const base =
-        hasSolicitud && dto?.solicitud?.solicitud_id
-          ? `solicitud_${safeFileComponent(dto.solicitud.solicitud_id)}`
-          : `cliente_${safeFileComponent(dto?.cliente?.numero_identificacion || dto?.cliente?.numero || dto?.cliente?.id_cliente || id_cliente)}`;
+      const base = todos
+        ? (entidad === 'solicitud' ? 'solicitudes' : 'clientes')
+        : (hasSolicitud && dto?.solicitud?.solicitud_id
+            ? `solicitud_${safeFileComponent(dto.solicitud.solicitud_id)}`
+            : `cliente_${safeFileComponent(dto?.cliente?.numero_identificacion || dto?.cliente?.numero || dto?.cliente?.id_cliente || id_cliente)}`);
       const filename = `${base}.${ext}`;
 
       res.setHeader('Cache-Control', 'no-store');

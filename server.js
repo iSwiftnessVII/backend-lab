@@ -15,7 +15,6 @@ const papeleriaRoutes = require('./src/routes/papeleria');
 const usuariosRoutes = require('./src/routes/usuarios');
 const dashboardRoutes = require('./src/routes/dashboard');
 const logsRoutes = require('./src/routes/logs');
-const reportesRoutes = require('./src/routes/reportes');
 const equiposRoutes = require('./src/routes/equipos');
 const volumetricosRoutes = require('./src/routes/volumetricos');
 const referenciaRoutes = require('./src/routes/referencia');
@@ -125,7 +124,6 @@ app.use('/api/papeleria', papeleriaRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/logs', logsRoutes);
-app.use('/api/reportes', reportesRoutes);
 app.use('/api/equipos', equiposRoutes);
 app.use('/api/volumetricos', volumetricosRoutes);
 app.use('/api/referencia', referenciaRoutes);
@@ -146,7 +144,6 @@ app.get('/', (req, res) => {
       usuarios: '/api/usuarios',
       dashboard: '/api/dashboard',
       logs: '/api/logs',
-      reportes: '/api/reportes',
       equipos: '/api/equipos',
       volumetricos: '/api/volumetricos',
       referencia: '/api/referencia'
