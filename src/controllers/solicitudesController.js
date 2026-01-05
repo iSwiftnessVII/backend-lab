@@ -2389,10 +2389,7 @@ const solicitudesController = {
 
       // Regla A: el template manda. Si hay loop, generamos "todos" de esa entidad.
       const loopEntity = detectSolicitudesLoopEntity(Buffer.from(tpl.archivo));
-      if (loopEntity === 'ambos') {
-        return res.status(400).json({ message: 'La plantilla contiene loops de clientes y solicitudes; use solo uno' });
-      }
-      const todos = loopEntity === 'cliente' || loopEntity === 'solicitud';
+      const todos = loopEntity === 'cliente' || loopEntity === 'solicitud' || loopEntity === 'ambos';
       if (!todos && !hasSolicitud && !hasCliente) {
         return res.status(400).json({ message: 'Debe enviar solicitud_id o id_cliente' });
       }
@@ -2407,14 +2404,19 @@ const solicitudesController = {
 
       let entidad = entidadRaw;
       if (todos) {
-        if (loopEntity === 'cliente' || loopEntity === 'solicitud') {
-          entidad = loopEntity;
-        }
-        if (entidad !== 'cliente' && entidad !== 'solicitud') entidad = 'solicitud';
-        if (entidad === 'cliente') {
+        if (loopEntity === 'ambos') {
           dto.clientes = await fetchClientesLoopDTO();
-        } else {
           dto.solicitudes = await fetchSolicitudesLoopDTO();
+        } else {
+          if (loopEntity === 'cliente' || loopEntity === 'solicitud') {
+            entidad = loopEntity;
+          }
+          if (entidad !== 'cliente' && entidad !== 'solicitud') entidad = 'solicitud';
+          if (entidad === 'cliente') {
+            dto.clientes = await fetchClientesLoopDTO();
+          } else {
+            dto.solicitudes = await fetchSolicitudesLoopDTO();
+          }
         }
       } else if (hasSolicitud) {
         const fullDto = await fetchSolicitudDocumentoDTO({ solicitud_id: Number(solicitud_id) });
@@ -2440,7 +2442,7 @@ const solicitudesController = {
 
       const ext = isXlsx ? 'xlsx' : 'docx';
       const base = todos
-        ? (entidad === 'solicitud' ? 'solicitudes' : 'clientes')
+        ? (loopEntity === 'ambos' ? 'clientes_y_solicitudes' : (entidad === 'solicitud' ? 'solicitudes' : 'clientes'))
         : (hasSolicitud && dto?.solicitud?.solicitud_id
             ? `solicitud_${safeFileComponent(dto.solicitud.solicitud_id)}`
             : `cliente_${safeFileComponent(dto?.cliente?.numero_identificacion || dto?.cliente?.numero || dto?.cliente?.id_cliente || id_cliente)}`);
