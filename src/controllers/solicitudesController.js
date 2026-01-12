@@ -889,12 +889,35 @@ const solicitudesController = {
   },
 
   getCiudades: async (req, res) => {
-    const codigoDepartamento = req.query.departamento;
+    const codigoDepartamento = String(req.query.departamento || '').trim();
+
+    // Some DBs use different column names for the departamento code in `ciudades`.
+    // Detect once per process to avoid 500s caused by schema mismatch.
+    if (!global.__ciudadesDeptColumn) {
+      try {
+        const [cols] = await pool.query('SHOW COLUMNS FROM ciudades');
+        const fields = new Set((cols || []).map((c) => String(c.Field || '').toLowerCase()));
+        const candidates = [
+          'codigo_departamento',
+          'departamento_codigo',
+          'id_departamento',
+          'codigo_depto',
+          'cod_depto',
+          'depto_codigo'
+        ];
+        global.__ciudadesDeptColumn = candidates.find((c) => fields.has(c)) || null;
+      } catch (e) {
+        // If table doesn't exist or SHOW fails, leave null and let query below error.
+        global.__ciudadesDeptColumn = null;
+      }
+    }
+
     try {
-      let query = 'SELECT codigo, nombre, codigo_departamento FROM ciudades';
-      let params = [];
+      const deptCol = global.__ciudadesDeptColumn || 'id_departamento';
+      let query = `SELECT codigo, nombre, ${deptCol} AS codigo_departamento FROM ciudades`;
+      const params = [];
       if (codigoDepartamento) {
-        query += ' WHERE codigo_departamento = ?';
+        query += ` WHERE ${deptCol} = ?`;
         params.push(codigoDepartamento);
       }
       query += ' ORDER BY nombre ASC';

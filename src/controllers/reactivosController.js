@@ -791,7 +791,7 @@ deleteCatalogo: async (req, res) => {
     try {
       const [rows] = await pool.query(
         `SELECT hs.id
-         FROM hoja_seguridad hs
+         FROM hoja_seguridad_reactivos hs
          JOIN reactivos r ON r.lote = hs.lote
          WHERE r.codigo = ? AND r.activo = 1 AND hs.contenido_pdf IS NOT NULL
          ORDER BY hs.fecha_subida DESC
@@ -812,7 +812,7 @@ deleteCatalogo: async (req, res) => {
     try {
       const [rows] = await pool.query(
         `SELECT hs.contenido_pdf
-         FROM hoja_seguridad hs
+         FROM hoja_seguridad_reactivos hs
          JOIN reactivos r ON r.lote = hs.lote
          WHERE r.codigo = ? AND r.activo = 1
          ORDER BY hs.fecha_subida DESC
@@ -842,7 +842,7 @@ deleteCatalogo: async (req, res) => {
   getHojaSeguridadByLote: async (req, res) => {
     const { lote } = req.params;
     try {
-      const [rows] = await pool.query('SELECT id FROM hoja_seguridad WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
+      const [rows] = await pool.query('SELECT id FROM hoja_seguridad_reactivos WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrada' });
       return res.json({ url: `${encodeURIComponent(lote)}/hoja-seguridad/view` });
     } catch (err) {
@@ -853,7 +853,7 @@ deleteCatalogo: async (req, res) => {
   viewHojaSeguridadByLote: async (req, res) => {
     const { lote } = req.params;
     try {
-      const [rows] = await pool.query('SELECT contenido_pdf FROM hoja_seguridad WHERE lote = ?', [lote]);
+      const [rows] = await pool.query('SELECT contenido_pdf FROM hoja_seguridad_reactivos WHERE lote = ? ORDER BY fecha_subida DESC, id DESC LIMIT 1', [lote]);
       if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
       res.setHeader('Content-Type', 'application/pdf');
       res.send(rows[0].contenido_pdf);
@@ -875,11 +875,13 @@ deleteCatalogo: async (req, res) => {
         return res.status(400).json({ message: 'Archivo no es un PDF válido' });
     }
     try {
+        const filename = file.originalname || 'hoja_seguridad.pdf';
+
         await pool.query(
-            `INSERT INTO hoja_seguridad (lote, hoja_seguridad, contenido_pdf)
-             VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE hoja_seguridad = VALUES(hoja_seguridad), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-            [lote, file.originalname || 'hoja_seguridad.pdf', file.buffer]
+          `INSERT INTO hoja_seguridad_reactivos (lote, nombre_archivo, contenido_pdf)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE nombre_archivo = VALUES(nombre_archivo), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
+          [lote, filename, file.buffer]
         );
 
         // REGISTRO DE LOG - MODIFICADO
@@ -909,7 +911,7 @@ deleteCatalogo: async (req, res) => {
     }
     const { lote } = req.params;
     try {
-        const [result] = await pool.query('DELETE FROM hoja_seguridad WHERE lote = ?', [lote]);
+      const [result] = await pool.query('DELETE FROM hoja_seguridad_reactivos WHERE lote = ?', [lote]);
         if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrada' });
 
         // REGISTRO DE LOG - MODIFICADO
@@ -935,7 +937,7 @@ deleteCatalogo: async (req, res) => {
     try {
       const [rows] = await pool.query(
         `SELECT ca.id
-         FROM cert_analisis ca
+         FROM cert_analisis_reactivos ca
          JOIN reactivos r ON r.lote = ca.lote
          WHERE r.codigo = ? AND r.activo = 1 AND ca.contenido_pdf IS NOT NULL
          ORDER BY ca.fecha_subida DESC
@@ -946,6 +948,11 @@ deleteCatalogo: async (req, res) => {
       return res.json({ url: `catalogo/${encodeURIComponent(codigo)}/cert-analisis/view` });
     } catch (err) {
       console.error('Error GET /cert-analisis (por codigo):', err);
+      if (err && err.code === 'ER_NO_SUCH_TABLE') {
+        return res.status(500).json({
+          message: 'Falta la tabla para Certificado de Análisis (Reactivos). Cree cert_analisis_reactivos en MySQL (ver backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+        });
+      }
       res.status(500).json({ message: 'Error consultando certificado' });
     }
   },
@@ -955,7 +962,7 @@ deleteCatalogo: async (req, res) => {
     try {
       const [rows] = await pool.query(
         `SELECT ca.contenido_pdf
-         FROM cert_analisis ca
+         FROM cert_analisis_reactivos ca
          JOIN reactivos r ON r.lote = ca.lote
          WHERE r.codigo = ? AND r.activo = 1
          ORDER BY ca.fecha_subida DESC
@@ -967,6 +974,11 @@ deleteCatalogo: async (req, res) => {
       res.send(rows[0].contenido_pdf);
     } catch (err) {
       console.error('Error VIEW /cert-analisis (por codigo):', err);
+      if (err && err.code === 'ER_NO_SUCH_TABLE') {
+        return res.status(500).type('text/plain').send(
+          'Falta la tabla cert_analisis_reactivos. Cree la tabla en MySQL (backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+        );
+      }
       res.status(500).type('text/plain').send('Error obteniendo PDF');
     }
   },
@@ -983,23 +995,33 @@ deleteCatalogo: async (req, res) => {
   getCertAnalisisByLote: async (req, res) => {
     const { lote } = req.params;
     try {
-      const [rows] = await pool.query('SELECT id FROM cert_analisis WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
+      const [rows] = await pool.query('SELECT id FROM cert_analisis_reactivos WHERE lote = ? AND contenido_pdf IS NOT NULL', [lote]);
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
       return res.json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
     } catch (err) {
       console.error('Error GET /:lote/cert-analisis:', err);
+      if (err && err.code === 'ER_NO_SUCH_TABLE') {
+        return res.status(500).json({
+          message: 'Falta la tabla cert_analisis_reactivos. Cree la tabla en MySQL (backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+        });
+      }
       res.status(500).json({ message: 'Error consultando certificado' });
     }
   },
   viewCertAnalisisByLote: async (req, res) => {
     const { lote } = req.params;
     try {
-      const [rows] = await pool.query('SELECT contenido_pdf FROM cert_analisis WHERE lote = ?', [lote]);
+      const [rows] = await pool.query('SELECT contenido_pdf FROM cert_analisis_reactivos WHERE lote = ? ORDER BY fecha_subida DESC, id DESC LIMIT 1', [lote]);
       if (!rows.length || !rows[0].contenido_pdf) return res.status(404).type('text/plain').send('PDF no encontrado');
       res.setHeader('Content-Type', 'application/pdf');
       res.send(rows[0].contenido_pdf);
     } catch (err) {
       console.error('Error VIEW /:lote/cert-analisis:', err);
+      if (err && err.code === 'ER_NO_SUCH_TABLE') {
+        return res.status(500).type('text/plain').send(
+          'Falta la tabla cert_analisis_reactivos. Cree la tabla en MySQL (backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+        );
+      }
       res.status(500).type('text/plain').send('Error obteniendo PDF');
     }
   },
@@ -1016,11 +1038,13 @@ deleteCatalogo: async (req, res) => {
     return res.status(400).json({ message: 'Archivo no es un PDF válido' });
   }
   try {
+    const filename = file.originalname || 'cert_analisis.pdf';
+
     await pool.query(
-      `INSERT INTO cert_analisis (lote, certificado_analisis, contenido_pdf)
+      `INSERT INTO cert_analisis_reactivos (lote, certificado_analisis, contenido_pdf)
        VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE certificado_analisis = VALUES(certificado_analisis), contenido_pdf = VALUES(contenido_pdf), fecha_subida = CURRENT_TIMESTAMP`,
-      [lote, file.originalname || 'cert_analisis.pdf', file.buffer]
+      [lote, filename, file.buffer]
     );
 
     // REGISTRO DE LOG - MODIFICAR
@@ -1034,6 +1058,11 @@ deleteCatalogo: async (req, res) => {
     res.status(201).json({ url: `${encodeURIComponent(lote)}/cert-analisis/view` });
   } catch (err) {
     console.error('Error POST /:lote/cert-analisis:', err);
+    if (err && err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({
+        message: 'Falta la tabla cert_analisis_reactivos. Cree la tabla en MySQL (backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+      });
+    }
     res.status(500).json({ message: 'Error subiendo PDF' });
   }
 },
@@ -1045,7 +1074,7 @@ deleteCatalogo: async (req, res) => {
   }
   const { lote } = req.params;
   try {
-    const [result] = await pool.query('DELETE FROM cert_analisis WHERE lote = ?', [lote]);
+    const [result] = await pool.query('DELETE FROM cert_analisis_reactivos WHERE lote = ?', [lote]);
     if (result.affectedRows === 0) return res.status(404).json({ message: 'No encontrado' });
 
     // REGISTRO DE LOG - MODIFICAR
@@ -1064,6 +1093,11 @@ deleteCatalogo: async (req, res) => {
     res.json({ message: 'Eliminado' });
   } catch (err) {
     console.error('Error DELETE /:lote/cert-analisis:', err);
+    if (err && err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({
+        message: 'Falta la tabla cert_analisis_reactivos. Cree la tabla en MySQL (backend-lab/scripts/sql/create_cert_analisis_reactivos.sql).'
+      });
+    }
     res.status(500).json({ message: 'Error eliminando PDF' });
   }
 },
@@ -1181,10 +1215,12 @@ deleteCatalogo: async (req, res) => {
 
       // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
-            await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
-                [req.user.id, 'CREAR', 'REACTIVOS']
-            );
+          const desc = `Creación de reactivo: ${lote} (${codigo} - ${nombre})`;
+          const detalle = JSON.stringify({ lote, codigo, nombre });
+          await pool.query(
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
+            [req.user.id, 'CREAR', 'REACTIVOS', desc, detalle]
+          );
 
             // REGISTRO DE MOVIMIENTO
             await pool.query(
