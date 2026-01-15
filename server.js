@@ -26,6 +26,8 @@ const app = express();
 // Usa PORT del entorno (Render/hosting). Si no existe, por defecto 42420 en local.
 const PORT = parseInt(process.env.PORT, 10) || 42420;
 const MAX_PORT_ATTEMPTS = 5;
+// Host para bind del servidor. En Electron debe ser 127.0.0.1 (localhost-only).
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 
 // Configuración de CORS
 const corsOptions = {
@@ -41,6 +43,11 @@ const corsOptions = {
 
     // En desarrollo, permitir cualquier origen
     if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
+    // Electron (file://) requests often send Origin: null (or file:)
+    if (origin === 'null' || (typeof origin === 'string' && origin.startsWith('file:'))) {
       return callback(null, true);
     }
 
@@ -194,7 +201,7 @@ app.use((error, req, res, next) => {
 // Función mejorada para iniciar el servidor
 function startServer(port = PORT, attempt = 1) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, '0.0.0.0')
+    const server = app.listen(port, BIND_HOST)
       .once('listening', () => {
         console.log(`🎉 Servidor iniciado exitosamente!`);
         console.log(`📍 Puerto: ${port}`);
@@ -257,18 +264,28 @@ if (require.main === module) {
     .then(server => {
       setupGracefulShutdown(server);
       // Ejecutar notificaciones de vencimiento al iniciar y cada 24 horas
-      try {
-        reactivosController.ejecutarNotificacionesVencimiento?.();
-      } catch (e) {
-        console.error('Error inicializando notificaciones:', e);
-      }
-      setInterval(() => {
+      // En modo Desktop (Electron) se deshabilita por defecto para evitar
+      // intentos de conexión a DB al arranque (puede no estar disponible).
+      const isDesktop = String(process.env.DESKTOP_MODE || '') === '1';
+      const enableDesktopJob = String(process.env.ENABLE_REACTIVOS_NOTIFICATIONS || '') === 'true';
+      const shouldRunJob = !isDesktop || enableDesktopJob;
+
+      if (shouldRunJob) {
         try {
           reactivosController.ejecutarNotificacionesVencimiento?.();
         } catch (e) {
-          console.error('Error en job de notificaciones:', e);
+          console.error('Error inicializando notificaciones:', e);
         }
-      }, 24 * 60 * 60 * 1000);
+        setInterval(() => {
+          try {
+            reactivosController.ejecutarNotificacionesVencimiento?.();
+          } catch (e) {
+            console.error('Error en job de notificaciones:', e);
+          }
+        }, 24 * 60 * 60 * 1000);
+      } else {
+        console.log('ℹ️ Notificaciones de reactivos deshabilitadas (modo Desktop).');
+      }
     })
     .catch(error => {
       console.error('💥 Error crítico al iniciar el servidor:', error.message);

@@ -2,6 +2,20 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
+function isDbConnectivityError(err) {
+  const code = err && err.code;
+  return (
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'EAI_AGAIN' ||
+    code === 'ECONNRESET' ||
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ER_ACCESS_DENIED_ERROR' ||
+    code === 'ER_BAD_DB_ERROR'
+  );
+}
+
 const authController = {
   // Login con JWT
   login: async (req, res) => {
@@ -30,6 +44,11 @@ const authController = {
       // Verificar si el usuario está activo
       if (user.estado !== 'ACTIVO') {
         return res.status(401).json({ message: 'Usuario inactivo' });
+      }
+
+      // Si el hash no existe, tratarlo como credencial inválida (evita 500)
+      if (!user.contrasena) {
+        return res.status(401).json({ message: 'Credenciales inválidas' });
       }
       
       const ok = await bcrypt.compare(contrasena, user.contrasena);
@@ -60,7 +79,15 @@ const authController = {
       
     } catch (err) {
       console.error('Login error', err);
-      res.status(500).json({ message: 'Error interno del servidor' });
+
+      if (isDbConnectivityError(err)) {
+        return res.status(503).json({
+          message: 'No hay conexión con la base de datos',
+          code: err.code
+        });
+      }
+
+      return res.status(500).json({ message: 'Error interno del servidor' });
     }
   },
 
@@ -102,6 +129,13 @@ const authController = {
       }
       if (err.name === 'TokenExpiredError') {
         return res.status(401).json({ message: 'Token expirado' });
+      }
+
+      if (isDbConnectivityError(err)) {
+        return res.status(503).json({
+          message: 'No hay conexión con la base de datos',
+          code: err.code
+        });
       }
       
       console.error('whoami error', err);

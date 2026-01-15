@@ -12,6 +12,9 @@ try {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
+    connectTimeout: process.env.DB_CONNECT_TIMEOUT
+      ? parseInt(process.env.DB_CONNECT_TIMEOUT, 10)
+      : 10000,
     connectionLimit: 10,
     waitForConnections: true,
     queueLimit: 0,
