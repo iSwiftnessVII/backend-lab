@@ -535,6 +535,22 @@ function getExtLower(filename) {
   return idx >= 0 ? name.slice(idx) : '';
 }
 
+async function resolveIdByNameOrId({ table, idField = 'id', nameField = 'nombre', value }) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const asNum = Number(raw);
+  if (Number.isInteger(asNum) && asNum > 0) return asNum;
+
+  const [rows] = await pool.query(
+    `SELECT ${idField} AS id FROM ${table} WHERE LOWER(${nameField}) = LOWER(?) LIMIT 1`,
+    [raw]
+  );
+  const id = rows?.[0]?.id;
+  return Number.isInteger(Number(id)) ? Number(id) : null;
+}
+
 const reactivosController = {
   // GET /api/reactivos/aux
   getAux: async (req, res) => {
@@ -563,13 +579,25 @@ const reactivosController = {
     if (limit > 500) limit = 500;
     
     try {
-      const baseSelect = 'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, activo FROM catalogo_reactivos';
-      const baseWhere = ' WHERE activo = 1';
-      const where = q ? `${baseWhere} AND (LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ?)` : baseWhere;
-      const order = ' ORDER BY codigo';
+      const baseSelect = `
+        SELECT
+          c.codigo,
+          c.nombre,
+          c.tipo_reactivo_id,
+          c.clasificacion_sga_id,
+          tr.nombre AS tipo_reactivo,
+          cs.nombre AS clasificacion_sga,
+          c.activo
+        FROM catalogo_reactivos c
+        LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+        LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+      `;
+      const baseWhere = ' WHERE c.activo = 1';
+      const where = q ? `${baseWhere} AND (LOWER(c.codigo) LIKE ? OR LOWER(c.nombre) LIKE ?)` : baseWhere;
+      const order = ' ORDER BY c.codigo';
       
       if (limit > 0) {
-        const countQuery = `SELECT COUNT(*) as total FROM catalogo_reactivos${where}`;
+        const countQuery = `SELECT COUNT(*) as total FROM catalogo_reactivos c${where}`;
         let totalRows;
         if (q) {
           [totalRows] = await pool.query(countQuery, [likeParam(q), likeParam(q)]);
@@ -604,7 +632,20 @@ const reactivosController = {
     const { codigo } = req.params;
     try {
       const [rows] = await pool.query(
-        'SELECT codigo, nombre, tipo_reactivo, clasificacion_sga, activo FROM catalogo_reactivos WHERE codigo = ? AND activo = 1',
+        `
+          SELECT
+            c.codigo,
+            c.nombre,
+            c.tipo_reactivo_id,
+            c.clasificacion_sga_id,
+            tr.nombre AS tipo_reactivo,
+            cs.nombre AS clasificacion_sga,
+            c.activo
+          FROM catalogo_reactivos c
+          LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+          LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+          WHERE c.codigo = ? AND c.activo = 1
+        `,
         [codigo]
       );
       if (!rows.length) return res.status(404).json({ message: 'No encontrado' });
@@ -617,14 +658,25 @@ const reactivosController = {
 
   // POST /api/reactivos/catalogo
   createCatalogo: async (req, res) => {
-    const { codigo, nombre, tipo_reactivo, clasificacion_sga } = req.body || {};
-    if (!codigo || !nombre || !tipo_reactivo || !clasificacion_sga) {
+    const {
+      codigo,
+      nombre,
+      tipo_reactivo,
+      clasificacion_sga,
+      tipo_reactivo_id,
+      clasificacion_sga_id
+    } = req.body || {};
+
+    const tipoId = await resolveIdByNameOrId({ table: 'tipo_reactivo', value: tipo_reactivo_id ?? tipo_reactivo });
+    const clasifId = await resolveIdByNameOrId({ table: 'clasificacion_sga', value: clasificacion_sga_id ?? clasificacion_sga });
+
+    if (!codigo || !nombre || !tipoId || !clasifId) {
       return res.status(400).json({ message: 'Faltan campos requeridos' });
     }
     try {
       await pool.query(
-        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, activo) VALUES (?, ?, ?, ?, 1)',
-        [codigo, nombre, tipo_reactivo, clasificacion_sga]
+        'INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo_id, clasificacion_sga_id, activo) VALUES (?, ?, ?, ?, 1)',
+        [codigo, nombre, tipoId, clasifId]
       );
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -637,7 +689,26 @@ const reactivosController = {
           [req.user.id, 'CREAR', 'CATALOGO_REACTIVOS', fecha]
         );
       }
-      res.status(201).json({ codigo, nombre, tipo_reactivo, clasificacion_sga });
+      // Devolver en formato compatible con frontend (nombres)
+      const [rows] = await pool.query(
+        `
+          SELECT
+            c.codigo,
+            c.nombre,
+            c.tipo_reactivo_id,
+            c.clasificacion_sga_id,
+            tr.nombre AS tipo_reactivo,
+            cs.nombre AS clasificacion_sga,
+            c.activo
+          FROM catalogo_reactivos c
+          LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+          LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+          WHERE c.codigo = ?
+          LIMIT 1
+        `,
+        [codigo]
+      );
+      res.status(201).json(rows?.[0] || { codigo, nombre, tipo_reactivo_id: tipoId, clasificacion_sga_id: clasifId });
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
         try {
@@ -645,10 +716,28 @@ const reactivosController = {
           const activo = exist?.[0]?.activo;
           if (exist.length && (activo === 0 || activo === false)) {
             await pool.query(
-              'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ?, activo = 1 WHERE codigo = ?',
-              [nombre, tipo_reactivo, clasificacion_sga, codigo]
+              'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo_id = ?, clasificacion_sga_id = ?, activo = 1 WHERE codigo = ?',
+              [nombre, tipoId, clasifId, codigo]
             );
-            return res.status(200).json({ codigo, nombre, tipo_reactivo, clasificacion_sga, reactivado: true });
+            const [rows] = await pool.query(
+              `
+                SELECT
+                  c.codigo,
+                  c.nombre,
+                  c.tipo_reactivo_id,
+                  c.clasificacion_sga_id,
+                  tr.nombre AS tipo_reactivo,
+                  cs.nombre AS clasificacion_sga,
+                  c.activo
+                FROM catalogo_reactivos c
+                LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+                LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+                WHERE c.codigo = ?
+                LIMIT 1
+              `,
+              [codigo]
+            );
+            return res.status(200).json({ ...(rows?.[0] || { codigo, nombre }), reactivado: true });
           }
         } catch (_) {}
         return res.status(409).json({ message: 'Código ya existe en catálogo' });
@@ -661,30 +750,69 @@ const reactivosController = {
   // PUT /api/reactivos/catalogo/:codigo
   updateCatalogo: async (req, res) => {
     const { codigo } = req.params;
-    const { nombre, tipo_reactivo, clasificacion_sga } = req.body || {};
+    const {
+      nombre,
+      tipo_reactivo,
+      clasificacion_sga,
+      tipo_reactivo_id,
+      clasificacion_sga_id
+    } = req.body || {};
     
     try {
       // 1. Obtener datos actuales
-      const [rowsCurrent] = await pool.query('SELECT * FROM catalogo_reactivos WHERE codigo = ? AND activo = 1', [codigo]);
+      const [rowsCurrent] = await pool.query(
+        `
+          SELECT
+            c.codigo,
+            c.nombre,
+            c.tipo_reactivo_id,
+            c.clasificacion_sga_id,
+            tr.nombre AS tipo_reactivo,
+            cs.nombre AS clasificacion_sga,
+            c.activo
+          FROM catalogo_reactivos c
+          LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+          LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+          WHERE c.codigo = ? AND c.activo = 1
+          LIMIT 1
+        `,
+        [codigo]
+      );
       if (rowsCurrent.length === 0) {
         return res.status(404).json({ message: 'No encontrado' });
       }
       const datosActuales = rowsCurrent[0];
 
+      const resolvedTipoId =
+        tipo_reactivo_id !== undefined || tipo_reactivo !== undefined
+          ? await resolveIdByNameOrId({ table: 'tipo_reactivo', value: tipo_reactivo_id ?? tipo_reactivo })
+          : null;
+      const resolvedClasifId =
+        clasificacion_sga_id !== undefined || clasificacion_sga !== undefined
+          ? await resolveIdByNameOrId({ table: 'clasificacion_sga', value: clasificacion_sga_id ?? clasificacion_sga })
+          : null;
+
+      if ((tipo_reactivo_id !== undefined || tipo_reactivo !== undefined) && !resolvedTipoId) {
+        return res.status(400).json({ message: 'Tipo reactivo inválido' });
+      }
+      if ((clasificacion_sga_id !== undefined || clasificacion_sga !== undefined) && !resolvedClasifId) {
+        return res.status(400).json({ message: 'Clasificación SGA inválida' });
+      }
+
       // 2. Preparar datos nuevos
       const datosNuevos = {
         nombre: nombre !== undefined ? nombre : datosActuales.nombre,
-        tipo_reactivo: tipo_reactivo !== undefined ? tipo_reactivo : datosActuales.tipo_reactivo,
-        clasificacion_sga: clasificacion_sga !== undefined ? clasificacion_sga : datosActuales.clasificacion_sga
+        tipo_reactivo_id: resolvedTipoId !== null ? resolvedTipoId : datosActuales.tipo_reactivo_id,
+        clasificacion_sga_id: resolvedClasifId !== null ? resolvedClasifId : datosActuales.clasificacion_sga_id
       };
 
       // 3. Actualizar
       await pool.query(
-        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo = ?, clasificacion_sga = ? WHERE codigo = ? AND activo = 1',
+        'UPDATE catalogo_reactivos SET nombre = ?, tipo_reactivo_id = ?, clasificacion_sga_id = ? WHERE codigo = ? AND activo = 1',
         [
           datosNuevos.nombre || null, 
-          datosNuevos.tipo_reactivo || null, 
-          datosNuevos.clasificacion_sga || null, 
+          datosNuevos.tipo_reactivo_id || null, 
+          datosNuevos.clasificacion_sga_id || null, 
           codigo
         ]
       );
@@ -697,7 +825,7 @@ const reactivosController = {
           return String(val).trim();
         };
 
-        const campos = ['nombre', 'tipo_reactivo', 'clasificacion_sga'];
+        const campos = ['nombre', 'tipo_reactivo_id', 'clasificacion_sga_id'];
         for (const key of campos) {
           const valAnt = normalize(datosActuales[key]);
           const valNuevo = normalize(datosNuevos[key]);
@@ -723,12 +851,25 @@ const reactivosController = {
         );
       }
       
-      res.json({ 
-        codigo, 
-        nombre: datosNuevos.nombre || null, 
-        tipo_reactivo: datosNuevos.tipo_reactivo || null, 
-        clasificacion_sga: datosNuevos.clasificacion_sga || null 
-      });
+      const [rows] = await pool.query(
+        `
+          SELECT
+            c.codigo,
+            c.nombre,
+            c.tipo_reactivo_id,
+            c.clasificacion_sga_id,
+            tr.nombre AS tipo_reactivo,
+            cs.nombre AS clasificacion_sga,
+            c.activo
+          FROM catalogo_reactivos c
+          LEFT JOIN tipo_reactivo tr ON tr.id = c.tipo_reactivo_id
+          LEFT JOIN clasificacion_sga cs ON cs.id = c.clasificacion_sga_id
+          WHERE c.codigo = ?
+          LIMIT 1
+        `,
+        [codigo]
+      );
+      res.json(rows?.[0] || { codigo, nombre: datosNuevos.nombre || null, tipo_reactivo_id: datosNuevos.tipo_reactivo_id || null, clasificacion_sga_id: datosNuevos.clasificacion_sga_id || null });
     } catch (err) {
       console.error('Error PUT /catalogo/:codigo:', err);
       res.status(500).json({ message: 'Error actualizando catálogo' });
@@ -2079,13 +2220,6 @@ reactivosController.enviarNotificacionPrueba = async (req, res) => {
     };
     const fecha = addDays(30);
     const hoy = new Date(); const fechaAdq = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString().slice(0,10);
-    // Asegurar catálogo
-    await pool.query(
-      `INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo, clasificacion_sga, descripcion, activo)
-       VALUES (?, ?, ?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), activo = 1`,
-      ['EXPTEST', 'Reactivo de Prueba 30D', 'No controlado', 'No peligro', 'Elemento de prueba para notificaciones']
-    );
     // Obtener IDs requeridos
     const idFrom = async (table, nombre) => {
       const [rows] = await pool.query(`SELECT id FROM ${table} WHERE nombre = ? LIMIT 1`, [nombre]);
@@ -2093,6 +2227,19 @@ reactivosController.enviarNotificacionPrueba = async (req, res) => {
     };
     const tipo_id = await idFrom('tipo_reactivo', 'No controlado');
     const clasificacion_id = await idFrom('clasificacion_sga', 'No peligro');
+
+    // Asegurar catálogo (nuevo esquema con *_id)
+    await pool.query(
+      `INSERT INTO catalogo_reactivos (codigo, nombre, tipo_reactivo_id, clasificacion_sga_id, activo)
+       VALUES (?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         nombre = VALUES(nombre),
+         tipo_reactivo_id = VALUES(tipo_reactivo_id),
+         clasificacion_sga_id = VALUES(clasificacion_sga_id),
+         activo = 1`,
+      ['EXPTEST', 'Reactivo de Prueba 30D', tipo_id, clasificacion_id]
+    );
+
     const unidad_id = await idFrom('unidades', 'mL');
     const estado_id = await idFrom('estado_fisico', 'Liquido');
     const almacenamiento_id = await idFrom('almacenamiento', 'No aplica');
