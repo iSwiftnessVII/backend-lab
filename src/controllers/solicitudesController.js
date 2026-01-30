@@ -59,6 +59,34 @@ async function sendMail(to, subject, text, html) {
   return { messageId: info.messageId };
 }
 
+async function ensureSuscripcionesSolicitudesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
+        email VARCHAR(255) PRIMARY KEY,
+        activo TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('Error creando tabla suscripciones_solicitudes:', err);
+  }
+}
+
+async function ensureSuscripcionesRevisionTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
+        email VARCHAR(255) PRIMARY KEY,
+        activo TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('Error creando tabla suscripciones_revision_oferta:', err);
+  }
+}
+
 const ALLOWED_CLIENTE_FIELDS = new Set([
   'id_cliente',
   'numero',
@@ -2483,6 +2511,134 @@ const solicitudesController = {
     } catch (err) {
       console.error('Error POST /solicitudes/documentos/plantillas/:id/generar:', err);
       return res.status(500).json({ message: 'Error generando documento desde plantilla' });
+    }
+  },
+
+  // Suscripciones para nuevas solicitudes
+  suscribirseSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesSolicitudesTable();
+      const [existing] = await pool.query(
+        'SELECT activo FROM suscripciones_solicitudes WHERE email = ? LIMIT 1',
+        [email]
+      );
+      if (existing && existing.length && existing[0] && existing[0].activo) {
+        return res.status(409).json({ error: 'Este correo ya está suscrito a solicitudes' });
+      }
+      await pool.query(
+        `INSERT INTO suscripciones_solicitudes (email, activo) VALUES (?, 1)
+         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
+        [email]
+      );
+      const text = 'Te has suscrito a notificaciones de nuevas solicitudes.';
+      const html = '<p>Te has suscrito a notificaciones de <strong>nuevas solicitudes</strong>.</p>';
+      const r = await sendMail(email, 'Suscripción a nuevas solicitudes confirmada', text, html);
+      return res.json({ ok: true, ...r });
+    } catch (err) {
+      console.error('Error suscribirseSolicitudes:', err);
+      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
+    }
+  },
+
+  obtenerEstadoSuscripcionSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesSolicitudesTable();
+      const [rows] = await pool.query('SELECT activo FROM suscripciones_solicitudes WHERE email = ?', [email]);
+      if (!rows.length) return res.json({ suscrito: false });
+      return res.json({ suscrito: !!rows[0].activo });
+    } catch (err) {
+      console.error('Error obtenerEstadoSuscripcionSolicitudes:', err);
+      return res.status(500).json({ error: 'Error consultando suscripción' });
+    }
+  },
+
+  cancelarSuscripcionSolicitudes: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesSolicitudesTable();
+      const [result] = await pool.query('UPDATE suscripciones_solicitudes SET activo = 0 WHERE email = ?', [email]);
+      return res.json({ ok: true, updated: result.affectedRows });
+    } catch (err) {
+      console.error('Error cancelarSuscripcionSolicitudes:', err);
+      return res.status(500).json({ error: 'Error cancelando suscripción' });
+    }
+  },
+
+  // Suscripciones para revisión de oferta
+  suscribirseRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesRevisionTable();
+      const [existing] = await pool.query(
+        'SELECT activo FROM suscripciones_revision_oferta WHERE email = ? LIMIT 1',
+        [email]
+      );
+      if (existing && existing.length && existing[0] && existing[0].activo) {
+        return res.status(409).json({ error: 'Este correo ya está suscrito a revisión de oferta' });
+      }
+      await pool.query(
+        `INSERT INTO suscripciones_revision_oferta (email, activo) VALUES (?, 1)
+         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
+        [email]
+      );
+      const text = 'Te has suscrito a notificaciones de revisión de oferta.';
+      const html = '<p>Te has suscrito a notificaciones de <strong>revisión de oferta</strong>.</p>';
+      const r = await sendMail(email, 'Suscripción a revisión de oferta confirmada', text, html);
+      return res.json({ ok: true, ...r });
+    } catch (err) {
+      console.error('Error suscribirseRevisionOferta:', err);
+      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
+    }
+  },
+
+  obtenerEstadoSuscripcionRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesRevisionTable();
+      const [rows] = await pool.query('SELECT activo FROM suscripciones_revision_oferta WHERE email = ?', [email]);
+      if (!rows.length) return res.json({ suscrito: false });
+      return res.json({ suscrito: !!rows[0].activo });
+    } catch (err) {
+      console.error('Error obtenerEstadoSuscripcionRevisionOferta:', err);
+      return res.status(500).json({ error: 'Error consultando suscripción' });
+    }
+  },
+
+  cancelarSuscripcionRevisionOferta: async (req, res) => {
+    try {
+      const email = String((req.params || {}).email || '').trim().toLowerCase();
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !re.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+      }
+      await ensureSuscripcionesRevisionTable();
+      const [result] = await pool.query('UPDATE suscripciones_revision_oferta SET activo = 0 WHERE email = ?', [email]);
+      return res.json({ ok: true, updated: result.affectedRows });
+    } catch (err) {
+      console.error('Error cancelarSuscripcionRevisionOferta:', err);
+      return res.status(500).json({ error: 'Error cancelando suscripción' });
     }
   }
 };
