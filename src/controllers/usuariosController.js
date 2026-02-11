@@ -1,9 +1,11 @@
 const pool = require('../config/db');
 const bcrypt = require('bcrypt');
+const { AUX_MODULES } = require('../middleware/auxPerm');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 
 const SALT_ROUNDS = 10;
+const AUX_MODULE_KEYS = Array.from(AUX_MODULES);
 
 const usuariosController = {
   /* GET /api/usuarios/roles - Listar todos los roles */
@@ -355,6 +357,84 @@ const usuariosController = {
     } catch (err) {
       console.error('Error PATCH /contrasena/:id:', err);
       res.status(500).json({ message: 'Error actualizando contraseña' });
+    }
+  },
+
+  /* GET /api/usuarios/permisos/:id - Obtener permisos auxiliares por usuario */
+  getPermisosAuxiliares: async (req, res) => {
+    const { id } = req.params;
+
+    if (req.user.rol !== 'Superadmin' && Number(req.user.id) !== Number(id)) {
+      return res.status(403).json({ message: 'No tienes permisos para ver permisos auxiliares' });
+    }
+
+    try {
+      const [userCheck] = await pool.query(
+        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        [id]
+      );
+      if (!userCheck.length) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+
+      const [rows] = await pool.query(
+        'SELECT modulo, puede_editar FROM usuarios_permisos WHERE usuario_id = ? AND modulo IN (?)',
+        [id, AUX_MODULE_KEYS]
+      );
+
+      const permisos = {};
+      for (const key of AUX_MODULE_KEYS) permisos[key] = true;
+      for (const row of rows) {
+        permisos[row.modulo] = Number(row.puede_editar) === 1;
+      }
+
+      res.json({ usuario_id: Number(id), permisos });
+    } catch (err) {
+      console.error('Error GET /permisos/:id:', err);
+      res.status(500).json({ message: 'Error obteniendo permisos auxiliares' });
+    }
+  },
+
+  /* PATCH /api/usuarios/permisos/:id - Actualizar permisos auxiliares por usuario */
+  setPermisosAuxiliares: async (req, res) => {
+    const { id } = req.params;
+    const { permisos } = req.body || {};
+
+    if (req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ message: 'No tienes permisos para cambiar permisos auxiliares' });
+    }
+
+    if (!permisos || typeof permisos !== 'object') {
+      return res.status(400).json({ message: 'Permisos inválidos' });
+    }
+
+    try {
+      const [userCheck] = await pool.query(
+        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        [id]
+      );
+      if (!userCheck.length) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+
+      const updates = [];
+      for (const key of AUX_MODULE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(permisos, key)) {
+          const puedeEditar = permisos[key] ? 1 : 0;
+          updates.push(pool.query(
+            'INSERT INTO usuarios_permisos (usuario_id, modulo, puede_editar) VALUES (?, ?, ?) ' +
+            'ON DUPLICATE KEY UPDATE puede_editar = VALUES(puede_editar)',
+            [id, key, puedeEditar]
+          ));
+        }
+      }
+
+      await Promise.all(updates);
+
+      res.json({ message: 'Permisos auxiliares actualizados' });
+    } catch (err) {
+      console.error('Error PATCH /permisos/:id:', err);
+      res.status(500).json({ message: 'Error actualizando permisos auxiliares' });
     }
   }
 };

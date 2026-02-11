@@ -53,6 +53,7 @@ const ALLOWED_REACTIVO_FIELDS = new Set([
   'referencia',
   'cas',
   'presentacion',
+  'presentacion_cant',
   'cantidad_total',
   'fecha_adquisicion',
   'fecha_vencimiento',
@@ -117,6 +118,7 @@ async function fetchReactivoDTO({ codigo, lote }) {
         r.referencia,
         r.cas,
         r.presentacion,
+        r.presentacion_cant,
         r.cantidad_total,
         r.fecha_adquisicion,
         r.fecha_vencimiento,
@@ -152,6 +154,7 @@ async function fetchReactivoDTO({ codigo, lote }) {
   reactivo.referencia = valueToText(row.referencia);
   reactivo.cas = valueToText(row.cas);
   reactivo.presentacion = row.presentacion ?? '';
+  reactivo.presentacion_cant = row.presentacion_cant ?? '';
   reactivo.cantidad_total = row.cantidad_total ?? '';
   reactivo.fecha_adquisicion = formatDateYMD(row.fecha_adquisicion);
   reactivo.fecha_vencimiento = formatDateYMD(row.fecha_vencimiento);
@@ -177,6 +180,7 @@ async function fetchReactivosLoopDTO({ limit } = {}) {
         r.referencia,
         r.cas,
         r.presentacion,
+        r.presentacion_cant,
         r.cantidad_total,
         r.fecha_adquisicion,
         r.fecha_vencimiento,
@@ -211,6 +215,7 @@ async function fetchReactivosLoopDTO({ limit } = {}) {
     reactivo.referencia = valueToText(row.referencia);
     reactivo.cas = valueToText(row.cas);
     reactivo.presentacion = row.presentacion ?? '';
+    reactivo.presentacion_cant = row.presentacion_cant ?? '';
     reactivo.cantidad_total = row.cantidad_total ?? '';
     reactivo.fecha_adquisicion = formatDateYMD(row.fecha_adquisicion);
     reactivo.fecha_vencimiento = formatDateYMD(row.fecha_vencimiento);
@@ -560,7 +565,19 @@ const reactivosController = {
       const [unidades] = await pool.query('SELECT id, nombre FROM unidades ORDER BY nombre');
       const [estado] = await pool.query('SELECT id, nombre FROM estado_fisico ORDER BY nombre');
       const [recipiente] = await pool.query('SELECT id, nombre FROM tipo_recipiente ORDER BY nombre');
-      const [almacen] = await pool.query('SELECT id, nombre FROM almacenamiento ORDER BY id');
+      const [almacen] = await pool.query(
+        `SELECT id, nombre FROM almacenamiento
+         ORDER BY
+           CASE
+             WHEN nombre LIKE '%Nivel %' THEN
+               CONCAT(
+                 TRIM(SUBSTRING(nombre, 1, LOCATE('Nivel ', nombre) - 1)),
+                 LPAD(CAST(TRIM(SUBSTRING(nombre, LOCATE('Nivel ', nombre) + 6)) AS UNSIGNED), 3, '0')
+               )
+             ELSE nombre
+           END,
+           nombre`
+      );
       res.json({ tipos, clasif, unidades, estado, recipiente, almacen });
     } catch (err) {
       console.error('Error /aux:', err);
@@ -1248,6 +1265,9 @@ deleteCatalogo: async (req, res) => {
   // GET /api/reactivos?q=
   getReactivos: async (req, res) => {
     const q = (req.query.q || '').trim().toLowerCase();
+    const qLote = (req.query.lote || '').trim().toLowerCase();
+    const qCodigo = (req.query.codigo || '').trim().toLowerCase();
+    const qNombre = (req.query.nombre || '').trim().toLowerCase();
     let limit = parseInt(req.query.limit, 10);
     let offset = parseInt(req.query.offset, 10);
     if (isNaN(limit) || limit <= 0) limit = 0;
@@ -1260,6 +1280,18 @@ deleteCatalogo: async (req, res) => {
       if (q) {
         conditions.push('(LOWER(lote) LIKE ? OR LOWER(codigo) LIKE ? OR LOWER(nombre) LIKE ? OR LOWER(marca) LIKE ?)');
         params.push(likeParam(q), likeParam(q), likeParam(q), likeParam(q));
+      }
+      if (qLote) {
+        conditions.push('LOWER(lote) LIKE ?');
+        params.push(likeParam(qLote));
+      }
+      if (qCodigo) {
+        conditions.push('LOWER(codigo) LIKE ?');
+        params.push(likeParam(qCodigo));
+      }
+      if (qNombre) {
+        conditions.push('LOWER(nombre) LIKE ?');
+        params.push(likeParam(qNombre));
       }
       const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
       const baseSelect = 'SELECT * FROM reactivos' + whereClause;
@@ -1384,15 +1416,38 @@ deleteCatalogo: async (req, res) => {
   updateReactivo: async (req, res) => {
     const { lote } = req.params;
     const r = req.body || {};
+    const connection = await pool.getConnection();
+    let fkDisabled = false;
     try {
+      await connection.beginTransaction();
+
       // 1. Obtener datos actuales
-      const [rowsCurrent] = await pool.query('SELECT * FROM reactivos WHERE lote = ? AND activo = 1', [lote]);
+      const [rowsCurrent] = await connection.query('SELECT * FROM reactivos WHERE lote = ? AND activo = 1', [lote]);
       if (rowsCurrent.length === 0) {
+        await connection.rollback();
         return res.status(404).json({ message: 'No encontrado' });
       }
       const datosActuales = rowsCurrent[0];
 
       // 2. Preparar datos nuevos (Lógica existente)
+      const nuevoLote = trimStr(r.lote) || lote;
+      if (!nuevoLote) {
+        await connection.rollback();
+        return res.status(400).json({ message: 'Lote es requerido' });
+      }
+
+      if (nuevoLote !== lote) {
+        const [exists] = await connection.query('SELECT lote FROM reactivos WHERE lote = ? AND activo = 1', [nuevoLote]);
+        if (exists.length) {
+          await connection.rollback();
+          return res.status(409).json({ message: 'Lote ya existe' });
+        }
+        try {
+          await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+          fkDisabled = true;
+        } catch {}
+      }
+
       const codigo = trimStr(r.codigo);
       const nombre = trimStr(r.nombre);
       const presentacion = numOrNull(r.presentacion);
@@ -1416,24 +1471,65 @@ deleteCatalogo: async (req, res) => {
       const tipo_recipiente_id = numOrNull(r.tipo_recipiente_id);
 
       const datosNuevos = {
-        codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
+        lote: nuevoLote, codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
         fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
         almacenamiento_id, tipo_recipiente_id
       };
 
       // 3. Actualizar
-      await pool.query(
+      await connection.query(
         `UPDATE reactivos SET
-          codigo = ?, nombre = ?, marca = ?, referencia = ?, cas = ?, presentacion = ?, presentacion_cant = ?, cantidad_total = ?,
+          lote = ?, codigo = ?, nombre = ?, marca = ?, referencia = ?, cas = ?, presentacion = ?, presentacion_cant = ?, cantidad_total = ?,
           fecha_adquisicion = ?, fecha_vencimiento = ?, observaciones = ?, tipo_id = ?, clasificacion_id = ?, unidad_id = ?, estado_id = ?,
           almacenamiento_id = ?, tipo_recipiente_id = ?
         WHERE lote = ? AND activo = 1`,
         [
-          codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
+          nuevoLote, codigo, nombre, marca, referencia, cas, presentacion, presentacion_cant, cantidad_total,
           fecha_adquisicion, fecha_vencimiento, observaciones, tipo_id, clasificacion_id, unidad_id, estado_id,
           almacenamiento_id, tipo_recipiente_id, lote
         ]
       );
+
+      if (nuevoLote !== lote) {
+        let dbName = null;
+        try {
+          const [dbRows] = await connection.query('SELECT DATABASE() AS db');
+          dbName = dbRows && dbRows[0] ? dbRows[0].db : null;
+        } catch {}
+
+        const tableNames = [
+          'consumo_reactivos',
+          'hoja_seguridad_reactivos',
+          'cert_analisis_reactivos',
+          'movimientos_inventario'
+        ];
+        const existing = new Set();
+        if (dbName) {
+          try {
+            const [trows] = await connection.query(
+              'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ? AND table_name IN (?)',
+              [dbName, tableNames]
+            );
+            (trows || []).forEach((r) => existing.add(String(r.TABLE_NAME)));
+          } catch {}
+        }
+
+        if (existing.has('consumo_reactivos')) {
+          await connection.query('UPDATE consumo_reactivos SET lote = ? WHERE lote = ?', [nuevoLote, lote]);
+        }
+        if (existing.has('hoja_seguridad_reactivos')) {
+          await connection.query('UPDATE hoja_seguridad_reactivos SET lote = ? WHERE lote = ?', [nuevoLote, lote]);
+        }
+        if (existing.has('cert_analisis_reactivos')) {
+          await connection.query('UPDATE cert_analisis_reactivos SET lote = ? WHERE lote = ?', [nuevoLote, lote]);
+        }
+        if (existing.has('movimientos_inventario')) {
+          await connection.query(
+            'UPDATE movimientos_inventario SET producto_referencia = ? WHERE producto_tipo = ? AND producto_referencia = ?',
+            [nuevoLote, 'REACTIVO', lote]
+          );
+        }
+      }
 
       // 4. Calcular diferencias y registrar log
       if (req.user && req.user.id) {
@@ -1475,7 +1571,7 @@ deleteCatalogo: async (req, res) => {
                 
                 if (ids.length > 0) {
                     try {
-                        const [rows] = await pool.query(`SELECT id, nombre FROM ${config.table} WHERE id IN (?)`, [ids]);
+                      const [rows] = await connection.query(`SELECT id, nombre FROM ${config.table} WHERE id IN (?)`, [ids]);
                         const nameMap = {};
                         rows.forEach(r => nameMap[r.id] = r.nombre);
 
@@ -1494,16 +1590,23 @@ deleteCatalogo: async (req, res) => {
 
         const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
         
-        await pool.query(
+        await connection.query(
           'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'REACTIVOS', `Actualización de reactivo: ${lote}`, detallesCambios]
+          [req.user.id, 'ACTUALIZAR', 'REACTIVOS', `Actualización de reactivo: ${lote}${nuevoLote !== lote ? ` -> ${nuevoLote}` : ''}`, detallesCambios]
         );
       }
 
+      if (fkDisabled) {
+        try { await connection.query('SET FOREIGN_KEY_CHECKS = 1'); } catch {}
+      }
+      await connection.commit();
       res.json({ message: 'Actualizado' });
     } catch (err) {
+      try { await connection.rollback(); } catch {}
       console.error('Error PUT /:lote (reactivos):', err);
       res.status(500).json({ message: 'Error actualizando reactivo' });
+    } finally {
+      try { connection.release(); } catch {}
     }
   },
 
@@ -1581,11 +1684,29 @@ deleteCatalogo: async (req, res) => {
       }
       if (!userName) userName = 'Anónimo';
 
+      const residual = Number((currentCant - consumeCant).toFixed(4));
+
+      let hasResidual = false;
+      try {
+        const [cols] = await connection.query(
+          'SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?',
+          ['consumo_reactivos']
+        );
+        hasResidual = (cols || []).some((c) => String(c.COLUMN_NAME) === 'residual');
+      } catch {}
+
       // Insertar en consumo_reactivos
-      await connection.query(
-        'INSERT INTO consumo_reactivos (lote, cantidad, usuario, uso) VALUES (?, ?, ?, ?)',
-        [lote, consumeCant, userName, uso || null]
-      );
+      if (hasResidual) {
+        await connection.query(
+          'INSERT INTO consumo_reactivos (lote, cantidad, usuario, uso, residual) VALUES (?, ?, ?, ?, ?)',
+          [lote, consumeCant, userName, uso || null, residual]
+        );
+      } else {
+        await connection.query(
+          'INSERT INTO consumo_reactivos (lote, cantidad, usuario, uso) VALUES (?, ?, ?, ?)',
+          [lote, consumeCant, userName, uso || null]
+        );
+      }
 
       // Actualizar reactivos
       await connection.query(
@@ -1611,7 +1732,7 @@ deleteCatalogo: async (req, res) => {
       }
 
       await connection.commit();
-      res.json({ message: 'Consumo registrado exitosamente', nuevo_saldo: Number((currentCant - consumeCant).toFixed(4)) });
+      res.json({ message: 'Consumo registrado exitosamente', nuevo_saldo: residual });
 
     } catch (err) {
       await connection.rollback();
@@ -1619,6 +1740,92 @@ deleteCatalogo: async (req, res) => {
       res.status(500).json({ message: 'Error registrando consumo' });
     } finally {
       connection.release();
+    }
+  },
+
+  // GET /api/reactivos/consumo
+  listarConsumosReactivos: async (req, res) => {
+    try {
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(500, Math.floor(limitRaw)) : 100;
+
+      let dbName = null;
+      try {
+        const [dbRows] = await pool.query('SELECT DATABASE() AS db');
+        dbName = dbRows && dbRows[0] ? dbRows[0].db : null;
+      } catch {}
+
+      let columns = [];
+      if (dbName) {
+        try {
+          const [cols] = await pool.query(
+            'SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = ? AND table_name = ?',[dbName, 'consumo_reactivos']
+          );
+          columns = (cols || []).map((c) => String(c.COLUMN_NAME));
+        } catch {}
+      }
+
+      const hasCreatedAt = columns.includes('created_at');
+      const hasFecha = columns.includes('fecha');
+      const hasId = columns.includes('id');
+      const hasResidual = columns.includes('residual');
+
+      const dateExpr = hasCreatedAt ? 'c.created_at' : (hasFecha ? 'c.fecha' : 'NOW()');
+      const orderExpr = hasCreatedAt ? 'c.created_at' : (hasFecha ? 'c.fecha' : (hasId ? 'c.id' : 'c.lote'));
+
+      const [rows] = await pool.query(
+        `SELECT c.lote, c.cantidad, c.usuario, c.uso,
+                ${dateExpr} AS fecha,
+                ${hasResidual ? 'c.residual' : 'NULL'} AS residual,
+                r.codigo, r.nombre, r.cantidad_total, r.unidad_id
+         FROM consumo_reactivos c
+         LEFT JOIN reactivos r ON r.lote = c.lote
+         ORDER BY ${orderExpr} DESC
+         LIMIT ?`,
+        [limit]
+      );
+
+      const resultRows = Array.isArray(rows) ? rows : [];
+      const groups = new Map();
+
+      for (const row of resultRows) {
+        const lote = row.lote ?? '';
+        if (!groups.has(lote)) groups.set(lote, []);
+        groups.get(lote).push(row);
+      }
+
+      for (const [, groupRows] of groups) {
+        groupRows.sort((a, b) => {
+          const da = a.fecha ? new Date(a.fecha).getTime() : NaN;
+          const db = b.fecha ? new Date(b.fecha).getTime() : NaN;
+          if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return db - da;
+          const ia = Number(a.id) || 0;
+          const ib = Number(b.id) || 0;
+          return ib - ia;
+        });
+
+        let running = 0;
+        const base = Number(groupRows[0]?.cantidad_total);
+        running = Number.isFinite(base) ? base : 0;
+
+        for (const row of groupRows) {
+          const consumeCant = Number(row.cantidad) || 0;
+          const existingResidual = row.residual !== null && row.residual !== undefined ? Number(row.residual) : null;
+
+          if (Number.isFinite(existingResidual)) {
+            row.residual = existingResidual;
+            running = existingResidual + consumeCant;
+          } else {
+            row.residual = Number.isFinite(running) ? running : 0;
+            running = row.residual + consumeCant;
+          }
+        }
+      }
+
+      return res.json(resultRows);
+    } catch (err) {
+      console.error('Error listarConsumosReactivos:', err);
+      return res.status(500).json({ message: 'Error listando consumos' });
     }
   },
 

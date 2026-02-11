@@ -24,4 +24,10 @@ router.patch('/rol/:id', verifyToken, usuariosController.cambiarRol);
 /* PATCH /api/usuarios/contrasena/:id - Cambiar contraseña de usuario */
 router.patch('/contrasena/:id', verifyToken, usuariosController.cambiarContrasena);
 
+/* GET /api/usuarios/permisos/:id - Obtener permisos auxiliares */
+router.get('/permisos/:id', verifyToken, usuariosController.getPermisosAuxiliares);
+
+/* PATCH /api/usuarios/permisos/:id - Actualizar permisos auxiliares */
+router.patch('/permisos/:id', verifyToken, usuariosController.setPermisosAuxiliares);
+
 module.exports = router;

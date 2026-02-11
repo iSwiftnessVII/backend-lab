@@ -5,6 +5,27 @@ const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 
+function templateHasVolumetricosLoop(templateBuffer) {
+  try {
+    const zip = new PizZip(templateBuffer);
+    const re = /{{\s*#(volumetricos|materiales)\s*}}/i;
+    for (const name of Object.keys(zip.files || {})) {
+      const entry = zip.files[name];
+      if (!entry || entry.dir) continue;
+      let text = '';
+      try {
+        text = zip.file(name)?.asText() || '';
+      } catch {
+        text = '';
+      }
+      if (text && re.test(text)) return true;
+    }
+  } catch {
+    // ignore; treat as no-loop
+  }
+  return false;
+}
+
 const UPLOADS_BASE = path.join(__dirname, '..', '..', 'uploads', 'volumetricos');
 
 async function ensureDir(dir) {
@@ -63,7 +84,12 @@ function validateVolumetricosTags(tags) {
   const invalid = [];
   for (const tag of tags) {
     const t = String(tag ?? '').trim();
-    if (t === '#historial' || t === '/historial' || t === '#intervalos' || t === '/intervalos') continue;
+    if (
+      t === '#historial' || t === '/historial' ||
+      t === '#intervalos' || t === '/intervalos' ||
+      t === '#volumetricos' || t === '/volumetricos' ||
+      t === '#materiales' || t === '/materiales'
+    ) continue;
     const m = /^(material|historial_ultimo|intervalo_ultimo|historial|intervalos)\.([A-Za-z0-9_]+)$/.exec(t);
     if (!m) {
       invalid.push(t);
@@ -111,6 +137,15 @@ async function fetchVolumetricoDocumentoDTO({ codigo }) {
   const intervalo_ultimo = intervalos.length ? intervalos[0] : Object.create(null);
 
   return { material, historial, intervalos, historial_ultimo, intervalo_ultimo };
+}
+
+async function fetchVolumetricosLoopDTO({ limit } = {}) {
+  const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(5000, Number(limit)) : 5000;
+  const [rows] = await pool.execute(
+    'SELECT * FROM material_volumetrico ORDER BY codigo_id LIMIT ?',
+    [lim]
+  );
+  return Array.isArray(rows) ? rows.map(toSafeRecord) : [];
 }
 
 function replaceExcelText(text, dto, ctx) {
@@ -254,6 +289,75 @@ function applyExcelLoop(sheet, loopName, items, dto) {
   }
 }
 
+function applyExcelDtoLoop(sheet, loopName, items) {
+  const startMarker = `{{#${loopName}}}`;
+  const endMarker = `{{/${loopName}}}`;
+  const maxCol = Math.max(1, sheet.columnCount || 1);
+
+  while (true) {
+    let startRow = null;
+    let endRow = null;
+    for (let i = 1; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+      if (startRow === null) {
+        if (rowHasMarker(row, startMarker, maxCol)) startRow = i;
+      } else {
+        if (rowHasMarker(row, endMarker, maxCol)) { endRow = i; break; }
+      }
+    }
+    if (startRow === null || endRow === null || endRow <= startRow) break;
+
+    const templateStart = startRow + 1;
+    const templateEnd = endRow - 1;
+    const templateCount = templateEnd >= templateStart ? (templateEnd - templateStart + 1) : 0;
+    const templateSnaps = [];
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      templateSnaps.push(snapshotRowForTemplate(sheet.getRow(rowNum), maxCol));
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      if (templateCount > 0) sheet.spliceRows(templateStart, templateCount);
+      const endRowNow = endRow - templateCount;
+      sheet.spliceRows(endRowNow, 1);
+      sheet.spliceRows(startRow, 1);
+      continue;
+    }
+
+    for (let r = 0; r < templateCount; r++) {
+      const rowNum = templateStart + r;
+      const row = sheet.getRow(rowNum);
+      const snap = templateSnaps[r];
+      for (let col = 1; col <= maxCol; col++) {
+        row.getCell(col).value = replaceCellValue(snap.cells[col]?.value, items[0], null);
+      }
+    }
+
+    let endMarkerRow = endRow;
+    for (let i = 1; i < items.length; i++) {
+      for (let r = 0; r < templateCount; r++) {
+        const snap = templateSnaps[r];
+        const values = new Array(maxCol + 1);
+        for (let col = 1; col <= maxCol; col++) values[col] = clonePlain(snap.cells[col]?.value);
+        const newRow = sheet.insertRow(endMarkerRow, values);
+        newRow.height = snap.height;
+        newRow.hidden = snap.hidden;
+        newRow.outlineLevel = snap.outlineLevel;
+        newRow.style = clonePlain(snap.style);
+        for (let col = 1; col <= maxCol; col++) {
+          const newCell = newRow.getCell(col);
+          newCell.style = clonePlain(snap.cells[col]?.style);
+          newCell.value = replaceCellValue(snap.cells[col]?.value, items[i], null);
+        }
+        endMarkerRow++;
+      }
+    }
+
+    sheet.spliceRows(endMarkerRow, 1);
+    sheet.spliceRows(startRow, 1);
+  }
+}
+
 async function generateXlsxFromTemplate(templateBuffer, dto) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
@@ -282,6 +386,12 @@ async function generateXlsxFromTemplate(templateBuffer, dto) {
   }
 
   workbook.eachSheet((sheet) => {
+    if (Array.isArray(dto?.volumetricos)) {
+      applyExcelDtoLoop(sheet, 'volumetricos', dto.volumetricos);
+    }
+    if (Array.isArray(dto?.materiales)) {
+      applyExcelDtoLoop(sheet, 'materiales', dto.materiales);
+    }
     applyExcelLoop(sheet, 'historial', dto?.historial, dto);
     applyExcelLoop(sheet, 'intervalos', dto?.intervalos, dto);
     sheet.eachRow((row) => {
@@ -1027,13 +1137,35 @@ exports.generarDocumentoVolumetrico = async (req, res) => {
 
     const body = req.body || {};
     const codigo = String(body.codigo ?? body.codigo_id ?? body.codigo_material ?? '').trim();
-    if (!codigo) {
+    const todos = templateHasVolumetricosLoop(file.buffer);
+    if (!todos && !codigo) {
       return res.status(400).json({ message: 'Debe enviar codigo' });
     }
 
-    const dto = await fetchVolumetricoDocumentoDTO({ codigo });
-    if (!dto) {
-      return res.status(404).json({ message: 'Material no encontrado' });
+    let dto = null;
+    if (todos) {
+      const materiales = await fetchVolumetricosLoopDTO();
+      const items = materiales.map((material) => ({
+        material,
+        historial: [],
+        intervalos: [],
+        historial_ultimo: Object.create(null),
+        intervalo_ultimo: Object.create(null)
+      }));
+      dto = {
+        material: Object.create(null),
+        historial: [],
+        intervalos: [],
+        historial_ultimo: Object.create(null),
+        intervalo_ultimo: Object.create(null),
+        volumetricos: items,
+        materiales: items
+      };
+    } else {
+      dto = await fetchVolumetricoDocumentoDTO({ codigo });
+      if (!dto) {
+        return res.status(404).json({ message: 'Material no encontrado' });
+      }
     }
 
     const original = String(file.originalname || '').toLowerCase();
@@ -1049,7 +1181,9 @@ exports.generarDocumentoVolumetrico = async (req, res) => {
 
     const ext = isXlsx ? 'xlsx' : 'docx';
     const code = dto?.material?.codigo_id ?? codigo;
-    const filename = `volumetrico_${safeFileComponent(code)}.${ext}`;
+    const filename = todos
+      ? `volumetricos.${ext}`
+      : `volumetrico_${safeFileComponent(code)}.${ext}`;
 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader(
@@ -1170,7 +1304,8 @@ exports.generarDocumentoVolumetricoDesdePlantilla = async (req, res) => {
     if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
 
     const codigo = String((req.body || {}).codigo || '').trim();
-    if (!codigo) return res.status(400).json({ message: 'Debe enviar codigo' });
+    const todos = !!(req.body || {}).todos;
+    if (!todos && !codigo) return res.status(400).json({ message: 'Debe enviar codigo' });
 
     const [rows] = await pool.query(
       'SELECT nombre_archivo, mime, archivo FROM plantillas_documento_volumetricos WHERE id = ? LIMIT 1',
@@ -1179,7 +1314,7 @@ exports.generarDocumentoVolumetricoDesdePlantilla = async (req, res) => {
     if (!rows || !rows.length) return res.status(404).json({ message: 'Plantilla no encontrada' });
 
     const tpl = rows[0];
-    req.body = { ...req.body, codigo };
+    req.body = { ...req.body, codigo: codigo || undefined, todos: todos || undefined };
     req.file = {
       buffer: tpl.archivo,
       originalname: tpl.nombre_archivo,

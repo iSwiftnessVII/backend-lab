@@ -3,6 +3,7 @@ const router = express.Router();
 const upload = require('../middleware/upload');
 const reactivosController = require('../controllers/reactivosController');
 const { verifyToken } = require('../middleware/jwt');
+const { requireAuxEdit } = require('../middleware/auxPerm');
 
 // GET /api/reactivos/aux
 router.get('/aux', reactivosController.getAux);
@@ -16,13 +17,13 @@ router.get('/catalogo', reactivosController.getCatalogo);
 router.get('/catalogo/:codigo', reactivosController.getCatalogoItem);
 
 // POST /api/reactivos/catalogo - CON AUTENTICACIÓN
-router.post('/catalogo', verifyToken, reactivosController.createCatalogo);
+router.post('/catalogo', verifyToken, requireAuxEdit('reactivos'), reactivosController.createCatalogo);
 
 // PUT /api/reactivos/catalogo/:codigo - CON AUTENTICACIÓN
-router.put('/catalogo/:codigo', verifyToken, reactivosController.updateCatalogo);
+router.put('/catalogo/:codigo', verifyToken, requireAuxEdit('reactivos'), reactivosController.updateCatalogo);
 
 // DELETE /api/reactivos/catalogo/:codigo - CON AUTENTICACIÓN
-router.delete('/catalogo/:codigo', verifyToken, reactivosController.deleteCatalogo);
+router.delete('/catalogo/:codigo', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteCatalogo);
 
 // ========== HOJA DE SEGURIDAD (PDFs) ==========
 
@@ -33,20 +34,20 @@ router.get('/catalogo/:codigo/hoja-seguridad', reactivosController.getHojaSeguri
 router.get('/catalogo/:codigo/hoja-seguridad/view', reactivosController.viewHojaSeguridad);
 
 // POST upload (CON MULTER) - CON AUTENTICACIÓN
-router.post('/catalogo/:codigo/hoja-seguridad', verifyToken, upload.single('file'), reactivosController.uploadHojaSeguridad);
+router.post('/catalogo/:codigo/hoja-seguridad', verifyToken, requireAuxEdit('reactivos'), upload.single('file'), reactivosController.uploadHojaSeguridad);
 
 // DELETE - CON AUTENTICACIÓN
-router.delete('/catalogo/:codigo/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridad);
+router.delete('/catalogo/:codigo/hoja-seguridad', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteHojaSeguridad);
 
 // Por LOTE
 router.get('/:lote/hoja-seguridad', reactivosController.getHojaSeguridadByLote);
 router.get('/:lote/hoja-seguridad/view', reactivosController.viewHojaSeguridadByLote);
 
 // POST upload por lote - CON AUTENTICACIÓN
-router.post('/:lote/hoja-seguridad', verifyToken, upload.single('file'), reactivosController.uploadHojaSeguridadByLote);
+router.post('/:lote/hoja-seguridad', verifyToken, requireAuxEdit('reactivos'), upload.single('file'), reactivosController.uploadHojaSeguridadByLote);
 
 // DELETE por lote - CON AUTENTICACIÓN
-router.delete('/:lote/hoja-seguridad', verifyToken, reactivosController.deleteHojaSeguridadByLote);
+router.delete('/:lote/hoja-seguridad', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteHojaSeguridadByLote);
 
 // ========== CERTIFICADO DE ANÁLISIS (PDFs) ==========
 
@@ -57,20 +58,20 @@ router.get('/catalogo/:codigo/cert-analisis', reactivosController.getCertAnalisi
 router.get('/catalogo/:codigo/cert-analisis/view', reactivosController.viewCertAnalisis);
 
 // POST upload (CON MULTER) - CON AUTENTICACIÓN
-router.post('/catalogo/:codigo/cert-analisis', verifyToken, upload.single('file'), reactivosController.uploadCertAnalisis);
+router.post('/catalogo/:codigo/cert-analisis', verifyToken, requireAuxEdit('reactivos'), upload.single('file'), reactivosController.uploadCertAnalisis);
 
 // DELETE - CON AUTENTICACIÓN
-router.delete('/catalogo/:codigo/cert-analisis', verifyToken, reactivosController.deleteCertAnalisis);
+router.delete('/catalogo/:codigo/cert-analisis', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteCertAnalisis);
 
 // Por LOTE
 router.get('/:lote/cert-analisis', reactivosController.getCertAnalisisByLote);
 router.get('/:lote/cert-analisis/view', reactivosController.viewCertAnalisisByLote);
 
 // POST upload por lote - CON AUTENTICACIÓN
-router.post('/:lote/cert-analisis', verifyToken, upload.single('file'), reactivosController.uploadCertAnalisisByLote);
+router.post('/:lote/cert-analisis', verifyToken, requireAuxEdit('reactivos'), upload.single('file'), reactivosController.uploadCertAnalisisByLote);
 
 // DELETE por lote - CON AUTENTICACIÓN
-router.delete('/:lote/cert-analisis', verifyToken, reactivosController.deleteCertAnalisisByLote);
+router.delete('/:lote/cert-analisis', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteCertAnalisisByLote);
 
 // ========== SUSCRIPCIONES Y NOTIFICACIONES ==========
 // Suscribirse a notificaciones de vencimiento de reactivos
@@ -87,9 +88,9 @@ router.get('/alertas-proximas', reactivosController.listarAlertasProximas);
 
 // ========== GENERACIÓN DE DOCUMENTOS ==========
 router.get('/documentos/plantillas', verifyToken, reactivosController.listarPlantillasDocumentoReactivo);
-router.post('/documentos/plantillas', verifyToken, upload.single('template'), reactivosController.subirPlantillaDocumentoReactivo);
-router.delete('/documentos/plantillas/:id', verifyToken, reactivosController.eliminarPlantillaDocumentoReactivo);
-router.post('/documentos/plantillas/:id/generar', verifyToken, reactivosController.generarDocumentoReactivoDesdePlantilla);
+router.post('/documentos/plantillas', verifyToken, requireAuxEdit('reactivos'), upload.single('template'), reactivosController.subirPlantillaDocumentoReactivo);
+router.delete('/documentos/plantillas/:id', verifyToken, requireAuxEdit('reactivos'), reactivosController.eliminarPlantillaDocumentoReactivo);
+router.post('/documentos/plantillas/:id/generar', verifyToken, requireAuxEdit('reactivos'), reactivosController.generarDocumentoReactivoDesdePlantilla);
 
 // ========== REACTIVOS (CRUD) ==========
 
@@ -100,19 +101,22 @@ router.get('/export/excel', reactivosController.exportReactivosExcel);
 // GET /api/reactivos/total
 router.get('/total', reactivosController.getReactivosTotal);
 
+// GET /api/reactivos/consumo - CON AUTENTICACIÓN
+router.get('/consumo', verifyToken, reactivosController.listarConsumosReactivos);
+
 // POST /api/reactivos/consumo - CON AUTENTICACIÓN
-router.post('/consumo', verifyToken, reactivosController.registrarConsumo);
+router.post('/consumo', verifyToken, requireAuxEdit('reactivos'), reactivosController.registrarConsumo);
 
 // GET /api/reactivos/:lote
 router.get('/:lote', reactivosController.getReactivoByLote);
 
 // POST /api/reactivos - CON AUTENTICACIÓN
-router.post('/', verifyToken, reactivosController.createReactivo);
+router.post('/', verifyToken, requireAuxEdit('reactivos'), reactivosController.createReactivo);
 
 // PUT /api/reactivos/:lote - CON AUTENTICACIÓN
-router.put('/:lote', verifyToken, reactivosController.updateReactivo);
+router.put('/:lote', verifyToken, requireAuxEdit('reactivos'), reactivosController.updateReactivo);
 
 // DELETE /api/reactivos/:lote - CON AUTENTICACIÓN
-router.delete('/:lote', verifyToken, reactivosController.deleteReactivo);
+router.delete('/:lote', verifyToken, requireAuxEdit('reactivos'), reactivosController.deleteReactivo);
 
 module.exports = router;
