@@ -395,6 +395,61 @@ const usuariosController = {
     }
   },
 
+  /* GET /api/usuarios/permisos?ids=1,2,3 - Obtener permisos auxiliares por lote */
+  getPermisosAuxiliaresBatch: async (req, res) => {
+    if (req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ message: 'No tienes permisos para ver permisos auxiliares' });
+    }
+
+    const idsParam = req.query.ids || '';
+    const ids = String(idsParam)
+      .split(',')
+      .map((v) => parseInt(String(v).trim(), 10))
+      .filter((v) => Number.isFinite(v));
+
+    const uniqueIds = Array.from(new Set(ids));
+    if (!uniqueIds.length) {
+      return res.status(400).json({ message: 'Ids inválidos' });
+    }
+
+    try {
+      const [userRows] = await pool.query(
+        'SELECT id_usuario FROM usuarios WHERE id_usuario IN (?)',
+        [uniqueIds]
+      );
+
+      const validIds = (userRows || []).map((r) => Number(r.id_usuario)).filter((v) => Number.isFinite(v));
+      if (!validIds.length) {
+        return res.json({ rows: [] });
+      }
+
+      const [rows] = await pool.query(
+        'SELECT usuario_id, modulo, puede_editar FROM usuarios_permisos WHERE usuario_id IN (?) AND modulo IN (?)',
+        [validIds, AUX_MODULE_KEYS]
+      );
+
+      const basePerms = {};
+      for (const key of AUX_MODULE_KEYS) basePerms[key] = true;
+
+      const map = {};
+      for (const id of validIds) {
+        map[id] = { ...basePerms };
+      }
+
+      for (const row of rows || []) {
+        const uid = Number(row.usuario_id);
+        if (!map[uid]) map[uid] = { ...basePerms };
+        map[uid][row.modulo] = Number(row.puede_editar) === 1;
+      }
+
+      const payload = validIds.map((id) => ({ usuario_id: id, permisos: map[id] }));
+      res.json({ rows: payload });
+    } catch (err) {
+      console.error('Error GET /permisos (batch):', err);
+      res.status(500).json({ message: 'Error obteniendo permisos auxiliares' });
+    }
+  },
+
   /* PATCH /api/usuarios/permisos/:id - Actualizar permisos auxiliares por usuario */
   setPermisosAuxiliares: async (req, res) => {
     const { id } = req.params;

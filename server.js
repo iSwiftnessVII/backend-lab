@@ -18,6 +18,8 @@ const logsRoutes = require('./src/routes/logs');
 const equiposRoutes = require('./src/routes/equipos');
 const volumetricosRoutes = require('./src/routes/volumetricos');
 const referenciaRoutes = require('./src/routes/referencia');
+const excelRoutes = require('./src/routes/excel');
+const notificacionesRoutes = require('./src/routes/notificaciones');
 const reactivosController = require('./src/controllers/reactivosController');
 
 
@@ -134,6 +136,8 @@ app.use('/api/logs', logsRoutes);
 app.use('/api/equipos', equiposRoutes);
 app.use('/api/volumetricos', volumetricosRoutes);
 app.use('/api/referencia', referenciaRoutes);
+app.use('/api/excel', excelRoutes);
+app.use('/api/notificaciones', notificacionesRoutes);
 
 // Ruta de bienvenida
 app.get('/', (req, res) => {

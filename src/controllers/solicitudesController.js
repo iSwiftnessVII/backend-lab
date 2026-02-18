@@ -87,6 +87,41 @@ async function ensureSuscripcionesRevisionTable() {
   }
 }
 
+async function getEstadoIdByName(nombre) {
+  const name = String(nombre || '').trim().toUpperCase();
+  if (!name) return null;
+  try {
+    const [rows] = await pool.query(
+      'SELECT id_estado FROM estados_solicitud WHERE UPPER(nombre_estado) = ? LIMIT 1',
+      [name]
+    );
+    if (rows && rows[0] && Number.isFinite(Number(rows[0].id_estado))) {
+      return Number(rows[0].id_estado);
+    }
+  } catch (err) {
+    console.warn('Error consultando estados_solicitud:', err);
+  }
+  return null;
+}
+
+function toBit(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'boolean') return val ? 1 : 0;
+  if (typeof val === 'number') return val ? 1 : 0;
+  const s = String(val).trim().toUpperCase();
+  if (!s) return null;
+  return s === '1' || s === 'TRUE' || s === 'SI' || s === 'SÍ' || s === 'YES' || s === 'Y' ? 1 : 0;
+}
+
+function normalizeConceptoFinal(val, fallbackViable) {
+  const raw = String(val || '').trim().toUpperCase();
+  if (raw) return raw;
+  if (fallbackViable === null || fallbackViable === undefined || fallbackViable === '') return null;
+  const viable = toBit(fallbackViable);
+  if (viable === null) return null;
+  return viable ? 'SOLICITUD_VIABLE' : 'SOLICITUD_NO_VIABLE';
+}
+
 const ALLOWED_CLIENTE_FIELDS = new Set([
   'id_cliente',
   'numero',
@@ -120,6 +155,8 @@ const ALLOWED_CLIENTE_FIELDS = new Set([
 const ALLOWED_SOLICITUD_FIELDS = new Set([
   'solicitud_id',
   'id_cliente',
+  'id_estado',
+  'id_admin',
   'tipo_solicitud',
   'nombre_muestra',
   'fecha_solicitud',
@@ -151,7 +188,18 @@ const ALLOWED_REVISION_FIELDS = new Set([
   'id_revision',
   'id_solicitud',
   'fecha_limite_entrega',
-  'servicio_es_viable'
+  'tipo_muestra_especificado',
+  'ensayos_requeridos_claros',
+  'equipos_calibrados',
+  'personal_competente',
+  'infraestructura_adecuada',
+  'insumos_vigentes',
+  'cumple_tiempos_entrega',
+  'normas_metodos_especificados',
+  'metodo_validado_verificado',
+  'metodo_adecuado',
+  'observaciones_tecnicas',
+  'concepto_final'
 ]);
 
 const ALLOWED_SEGUIMIENTO_ENCUESTA_FIELDS = new Set([
@@ -184,6 +232,29 @@ function formatDateTime(value) {
     if (!isNaN(d.getTime())) return d.toISOString().slice(0, 19).replace('T', ' ');
   } catch {}
   return '';
+}
+
+async function getSolicitudPreviewCode(tipo, fechaSolicitud, id) {
+  const tipoVal = String(tipo || '').trim();
+  if (!tipoVal) return 'N/A';
+  let fecha = fechaSolicitud ? new Date(fechaSolicitud) : new Date();
+  if (isNaN(fecha.getTime())) fecha = new Date();
+  const year = fecha.getFullYear();
+  const sid = Number(id);
+  if (!Number.isFinite(sid) || sid <= 0) {
+    return `${tipoVal}-${year}-00`;
+  }
+  try {
+    const [countResult] = await pool.query(
+      'SELECT COUNT(*) as count FROM Solicitudes WHERE tipo_solicitud = ? AND YEAR(fecha_solicitud) = ? AND solicitud_id <= ?',
+      [tipoVal, year, sid]
+    );
+    const consecutive = countResult[0]?.count || 0;
+    return `${tipoVal}-${year}-${String(consecutive).padStart(2, '0')}`;
+  } catch (err) {
+    console.warn('Error calculating preview code:', err);
+    return `${tipoVal}-${year}-00`;
+  }
 }
 
 function safeFileComponent(value) {
@@ -1159,12 +1230,16 @@ const solicitudesController = {
     try {
       const [rows] = await pool.query(
         `SELECT 
-            s.solicitud_id, s.id_cliente, s.tipo_solicitud, s.nombre_muestra, s.fecha_solicitud, s.lote_producto,
+            s.solicitud_id, s.id_cliente, s.id_estado, s.id_admin, s.tipo_solicitud, s.nombre_muestra, s.fecha_solicitud, s.lote_producto,
             s.fecha_vencimiento_muestra, s.tipo_muestra, s.tipo_empaque, s.analisis_requerido, s.req_analisis,
             s.cant_muestras, s.solicitud_recibida, s.fecha_entrega_muestra, s.recibe_personal, s.cargo_personal, s.observaciones,
-            u.nombre_solicitante, u.correo_electronico
+            u.nombre_solicitante, u.correo_electronico,
+            es.nombre_estado,
+            ua.email AS admin_email
          FROM Solicitudes s
          LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+         LEFT JOIN estados_solicitud es ON s.id_estado = es.id_estado
+         LEFT JOIN usuarios ua ON s.id_admin = ua.id_usuario
          ORDER BY s.solicitud_id DESC
          LIMIT 500`
       );
@@ -1182,6 +1257,8 @@ const solicitudesController = {
         `SELECT 
            s.solicitud_id,
            s.id_cliente,
+           s.id_estado,
+           s.id_admin,
            s.tipo_solicitud,
            s.nombre_muestra,
            s.fecha_solicitud,
@@ -1199,20 +1276,36 @@ const solicitudesController = {
            s.observaciones,
            u.nombre_solicitante,
            u.correo_electronico,
+           es.nombre_estado,
+           ua.email AS admin_email,
            o.genero_cotizacion,
            o.valor_cotizacion,
            o.fecha_envio_oferta,
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.servicio_es_viable,
+           r.tipo_muestra_especificado,
+           r.ensayos_requeridos_claros,
+           r.equipos_calibrados,
+           r.personal_competente,
+           r.infraestructura_adecuada,
+           r.insumos_vigentes,
+           r.cumple_tiempos_entrega,
+           r.normas_metodos_especificados,
+           r.metodo_validado_verificado,
+           r.metodo_adecuado,
+           r.observaciones_tecnicas,
+           r.concepto_final,
            e.fecha_encuesta,
+           e.fecha_realizacion_encuesta,
            e.comentarios,
            e.recomendaria_servicio,
            e.cliente_respondio,
            e.solicito_nueva_encuesta
          FROM Solicitudes s
          LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+         LEFT JOIN estados_solicitud es ON s.id_estado = es.id_estado
+         LEFT JOIN usuarios ua ON s.id_admin = ua.id_usuario
          LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
          LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
          LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
@@ -1233,6 +1326,8 @@ const solicitudesController = {
         `SELECT 
            s.solicitud_id,
            s.id_cliente,
+           s.id_estado,
+           s.id_admin,
            s.tipo_solicitud,
            s.nombre_muestra,
            s.fecha_solicitud,
@@ -1250,20 +1345,36 @@ const solicitudesController = {
            s.observaciones,
            u.nombre_solicitante,
            u.correo_electronico,
+           es.nombre_estado,
+           ua.email AS admin_email,
            o.genero_cotizacion,
            o.valor_cotizacion,
            o.fecha_envio_oferta,
            o.realizo_seguimiento_oferta,
            o.observacion_oferta,
            r.fecha_limite_entrega,
-           r.servicio_es_viable,
+           r.tipo_muestra_especificado,
+           r.ensayos_requeridos_claros,
+           r.equipos_calibrados,
+           r.personal_competente,
+           r.infraestructura_adecuada,
+           r.insumos_vigentes,
+           r.cumple_tiempos_entrega,
+           r.normas_metodos_especificados,
+           r.metodo_validado_verificado,
+           r.metodo_adecuado,
+           r.observaciones_tecnicas,
+           r.concepto_final,
            e.fecha_encuesta,
+           e.fecha_realizacion_encuesta,
            e.comentarios,
            e.recomendaria_servicio,
            e.cliente_respondio,
            e.solicito_nueva_encuesta
          FROM Solicitudes s
          LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
+         LEFT JOIN estados_solicitud es ON s.id_estado = es.id_estado
+         LEFT JOIN usuarios ua ON s.id_admin = ua.id_usuario
          LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
          LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
          LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
@@ -1284,19 +1395,23 @@ const solicitudesController = {
     if (!b.id_cliente) return res.status(400).json({ message: 'Missing id_cliente' });
 
     try {
+      const estadoId = Number(b.id_estado) || await getEstadoIdByName(b.nombre_estado) || await getEstadoIdByName('EN_ESPERA');
+      const adminId = Number.isFinite(Number(b.id_admin)) ? Number(b.id_admin) : null;
       let sql;
       let params;
       
       if (b.solicitud_id) {
         sql = `INSERT INTO Solicitudes (
-          solicitud_id, id_cliente, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
+          solicitud_id, id_cliente, id_estado, id_admin, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
           fecha_vencimiento_muestra, tipo_muestra, tipo_empaque, analisis_requerido,
           req_analisis, cant_muestras, solicitud_recibida, fecha_entrega_muestra,
           recibe_personal, cargo_personal, observaciones
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
         params = [
           b.solicitud_id,
           b.id_cliente,
+          estadoId || null,
+          adminId,
           b.tipo_solicitud || null,
           b.nombre_muestra || null,
           b.fecha_solicitud || null,
@@ -1315,13 +1430,15 @@ const solicitudesController = {
         ];
       } else {
         sql = `INSERT INTO Solicitudes (
-          id_cliente, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
+          id_cliente, id_estado, id_admin, tipo_solicitud, nombre_muestra, fecha_solicitud, lote_producto,
           fecha_vencimiento_muestra, tipo_muestra, tipo_empaque, analisis_requerido,
           req_analisis, cant_muestras, solicitud_recibida, fecha_entrega_muestra,
           recibe_personal, cargo_personal, observaciones
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
         params = [
           b.id_cliente,
+          estadoId || null,
+          adminId,
           b.tipo_solicitud || null,
           b.nombre_muestra || null,
           b.fecha_solicitud || null,
@@ -1433,6 +1550,29 @@ const solicitudesController = {
         console.warn('Error notificando suscriptores de solicitudes:', notifyErr);
       }
 
+      // Notificar asignación de solicitud (admin)
+      if (adminId) {
+        try {
+          const [adminRows] = await pool.query(
+            'SELECT email FROM usuarios WHERE id_usuario = ? LIMIT 1',
+            [adminId]
+          );
+          const adminEmail = adminRows && adminRows[0] ? adminRows[0].email : null;
+          if (adminEmail) {
+            const id = b.solicitud_id || result.insertId;
+            const tipo = b.tipo_solicitud || 'N/A';
+            const nombre = b.nombre_muestra || 'N/A';
+            const previewCode = await getSolicitudPreviewCode(tipo, b.fecha_solicitud, id);
+            const subject = `Solicitud asignada: ${previewCode}`;
+            const text = `Se te asignó la solicitud ${previewCode}.\n\nMuestra: ${nombre}`;
+            const html = `<h3>Solicitud asignada</h3><p><strong>Código:</strong> ${previewCode}</p><p><strong>Muestra:</strong> ${nombre}</p>`;
+            await sendMail(adminEmail, subject, text, html);
+          }
+        } catch (assignErr) {
+          console.warn('Error notificando asignación de solicitud:', assignErr);
+        }
+      }
+
       res.status(201).json({ solicitud_id: result.insertId });
     } catch (err) {
       console.error('POST /solicitudes error', err);
@@ -1516,6 +1656,119 @@ const solicitudesController = {
     } catch (err) {
       console.error('PUT /solicitudes/:id error', err);
       res.status(500).json({ message: 'Internal server error' });
+    }
+  },
+
+  // ---------- ESTADOS SOLICITUD ----------
+  getEstadosSolicitud: async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT id_estado, nombre_estado FROM estados_solicitud ORDER BY id_estado ASC');
+      res.json(rows || []);
+    } catch (err) {
+      console.error('GET /solicitudes/estados error', err);
+      res.status(500).json({ message: 'Error obteniendo estados de solicitud' });
+    }
+  },
+
+  updateSolicitudEstado: async (req, res) => {
+    const id = Number(req.params.id);
+    const id_estado = Number(req.body?.id_estado);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+    if (!Number.isFinite(id_estado) || id_estado <= 0) return res.status(400).json({ message: 'Estado inválido' });
+
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ message: 'No tienes permisos para cambiar el estado' });
+    }
+
+    try {
+      const [rowsEstado] = await pool.query('SELECT nombre_estado FROM estados_solicitud WHERE id_estado = ? LIMIT 1', [id_estado]);
+      if (!rowsEstado.length) return res.status(400).json({ message: 'Estado no encontrado' });
+
+      await pool.query('UPDATE Solicitudes SET id_estado = ? WHERE solicitud_id = ?', [id_estado, id]);
+
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Cambio de estado solicitud: ${id} -> ${rowsEstado[0].nombre_estado}`]
+        );
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('PATCH /solicitudes/:id/estado error', err);
+      res.status(500).json({ message: 'Error actualizando estado' });
+    }
+  },
+
+  updateSolicitudAsignacion: async (req, res) => {
+    const id = Number(req.params.id);
+    const id_admin = req.body?.id_admin === null || req.body?.id_admin === ''
+      ? null
+      : Number(req.body?.id_admin);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: 'ID inválido' });
+    if (id_admin !== null && (!Number.isFinite(id_admin) || id_admin <= 0)) {
+      return res.status(400).json({ message: 'Administrador inválido' });
+    }
+
+    if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
+      return res.status(403).json({ message: 'No tienes permisos para asignar solicitudes' });
+    }
+
+    try {
+      await pool.query('UPDATE Solicitudes SET id_admin = ? WHERE solicitud_id = ?', [id_admin, id]);
+
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'SOLICITUDES', fecha, `Asignación solicitud: ${id} -> ${id_admin ?? 'sin asignar'}`]
+        );
+      }
+
+      if (id_admin) {
+        const [rows] = await pool.query(
+          'SELECT email FROM usuarios WHERE id_usuario = ? LIMIT 1',
+          [id_admin]
+        );
+        const adminEmail = rows && rows[0] ? rows[0].email : null;
+        if (adminEmail) {
+          let tipo = 'N/A';
+          let fechaSolicitud = null;
+          let nombre = 'N/A';
+          try {
+            const [solRows] = await pool.query(
+              'SELECT tipo_solicitud, fecha_solicitud, nombre_muestra FROM Solicitudes WHERE solicitud_id = ? LIMIT 1',
+              [id]
+            );
+            if (solRows && solRows[0]) {
+              tipo = solRows[0].tipo_solicitud || 'N/A';
+              fechaSolicitud = solRows[0].fecha_solicitud || null;
+              nombre = solRows[0].nombre_muestra || 'N/A';
+            }
+          } catch (err) {
+            console.warn('Error loading solicitud data for assignment email:', err);
+          }
+          const previewCode = await getSolicitudPreviewCode(tipo, fechaSolicitud, id);
+          const subject = `Nueva solicitud asignada: ${previewCode}`;
+          const text = `Se te asignó la solicitud ${previewCode}.\n\nMuestra: ${nombre}`;
+          const html = `<h3>Solicitud asignada</h3><p><strong>Código:</strong> ${previewCode}</p><p><strong>Muestra:</strong> ${nombre}</p>`;
+          await sendMail(adminEmail, subject, text, html);
+        }
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('PATCH /solicitudes/:id/asignacion error', err);
+      res.status(500).json({ message: 'Error actualizando asignación' });
     }
   },
 
@@ -1619,16 +1872,36 @@ const solicitudesController = {
     const b = req.body || {};
     
     try {
+      const tipoMuestra = b.tipo_muestra_especificado
+        ? String(b.tipo_muestra_especificado).trim().toUpperCase()
+        : null;
+      const conceptoFinal = normalizeConceptoFinal(b.concepto_final, b.servicio_es_viable);
+
       // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM revision_oferta WHERE id_solicitud = ?', [id_solicitud]);
       const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
 
       const [update] = await pool.query(
-        `UPDATE revision_oferta SET fecha_limite_entrega = ?, servicio_es_viable = ?
+        `UPDATE revision_oferta SET fecha_limite_entrega = ?, tipo_muestra_especificado = ?,
+         ensayos_requeridos_claros = ?, equipos_calibrados = ?, personal_competente = ?,
+         infraestructura_adecuada = ?, insumos_vigentes = ?, cumple_tiempos_entrega = ?,
+         normas_metodos_especificados = ?, metodo_validado_verificado = ?, metodo_adecuado = ?,
+         observaciones_tecnicas = ?, concepto_final = ?
          WHERE id_solicitud = ?`,
         [
           b.fecha_limite_entrega || null,
-          b.servicio_es_viable ? 1 : 0,
+          tipoMuestra,
+          toBit(b.ensayos_requeridos_claros),
+          toBit(b.equipos_calibrados),
+          toBit(b.personal_competente),
+          toBit(b.infraestructura_adecuada),
+          toBit(b.insumos_vigentes),
+          toBit(b.cumple_tiempos_entrega),
+          toBit(b.normas_metodos_especificados),
+          toBit(b.metodo_validado_verificado),
+          toBit(b.metodo_adecuado),
+          b.observaciones_tecnicas || null,
+          conceptoFinal,
           id_solicitud
         ]
       );
@@ -1637,12 +1910,37 @@ const solicitudesController = {
       if (!update.affectedRows) {
         isInsert = true;
         await pool.query(
-          `INSERT INTO revision_oferta (id_solicitud, fecha_limite_entrega, servicio_es_viable)
-           VALUES (?,?,?)`,
+          `INSERT INTO revision_oferta (
+             id_solicitud,
+             fecha_limite_entrega,
+             tipo_muestra_especificado,
+             ensayos_requeridos_claros,
+             equipos_calibrados,
+             personal_competente,
+             infraestructura_adecuada,
+             insumos_vigentes,
+             cumple_tiempos_entrega,
+             normas_metodos_especificados,
+             metodo_validado_verificado,
+             metodo_adecuado,
+             observaciones_tecnicas,
+             concepto_final
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             id_solicitud,
             b.fecha_limite_entrega || null,
-            b.servicio_es_viable ? 1 : 0
+            tipoMuestra,
+            toBit(b.ensayos_requeridos_claros),
+            toBit(b.equipos_calibrados),
+            toBit(b.personal_competente),
+            toBit(b.infraestructura_adecuada),
+            toBit(b.insumos_vigentes),
+            toBit(b.cumple_tiempos_entrega),
+            toBit(b.normas_metodos_especificados),
+            toBit(b.metodo_validado_verificado),
+            toBit(b.metodo_adecuado),
+            b.observaciones_tecnicas || null,
+            conceptoFinal
           ]
         );
       }
@@ -1669,7 +1967,18 @@ const solicitudesController = {
            
            const datosNuevos = {
              fecha_limite_entrega: b.fecha_limite_entrega,
-             servicio_es_viable: b.servicio_es_viable ? 1 : 0
+             tipo_muestra_especificado: tipoMuestra,
+             ensayos_requeridos_claros: toBit(b.ensayos_requeridos_claros),
+             equipos_calibrados: toBit(b.equipos_calibrados),
+             personal_competente: toBit(b.personal_competente),
+             infraestructura_adecuada: toBit(b.infraestructura_adecuada),
+             insumos_vigentes: toBit(b.insumos_vigentes),
+             cumple_tiempos_entrega: toBit(b.cumple_tiempos_entrega),
+             normas_metodos_especificados: toBit(b.normas_metodos_especificados),
+             metodo_validado_verificado: toBit(b.metodo_validado_verificado),
+             metodo_adecuado: toBit(b.metodo_adecuado),
+             observaciones_tecnicas: b.observaciones_tecnicas || null,
+             concepto_final: conceptoFinal
            };
 
            for (const key in datosNuevos) {
@@ -1687,6 +1996,16 @@ const solicitudesController = {
              );
            }
          }
+      }
+
+      // Al completar la revisión, marcar solicitud como EVALUADA
+      try {
+        const evaluadaId = await getEstadoIdByName('EVALUADA');
+        if (evaluadaId) {
+          await pool.query('UPDATE Solicitudes SET id_estado = ? WHERE solicitud_id = ?', [evaluadaId, id_solicitud]);
+        }
+      } catch (estadoErr) {
+        console.warn('Error actualizando estado a EVALUADA:', estadoErr);
       }
 
       // Enviar correo al suscriptor de revisión si está suscrito
@@ -1736,8 +2055,10 @@ const solicitudesController = {
                 console.warn('Error calculating preview code for revision:', codeErr);
             }
 
-            const viable = b.servicio_es_viable ? 'viable' : 'no viable';
-            const subject = `Revisión de Oferta: ${previewCode} - ${s.nombre_muestra || 'N/A'} - Servicio ${viable}`;
+            const conceptoLabel = conceptoFinal === 'SOLICITUD_VIABLE_CON_OBSERVACIONES'
+              ? 'viable con observaciones'
+              : (conceptoFinal === 'SOLICITUD_VIABLE' ? 'viable' : (conceptoFinal === 'SOLICITUD_NO_VIABLE' ? 'no viable' : 'pendiente'));
+            const subject = `Revisión de Oferta: ${previewCode} - ${s.nombre_muestra || 'N/A'} - Servicio ${conceptoLabel}`;
             const text =
               `Se ha guardado la revisión de la oferta.\n\n` +
               `Código: ${previewCode}\n` +
@@ -1746,7 +2067,7 @@ const solicitudesController = {
               `Muestra: ${s.nombre_muestra || 'N/A'}\n` +
               `Tipo: ${s.tipo_solicitud || 'N/A'}\n\n` +
               `Fecha límite de entrega: ${b.fecha_limite_entrega || 'N/A'}\n` +
-              `Servicio es viable: ${b.servicio_es_viable ? 'Sí' : 'No'}`;
+              `Concepto final: ${conceptoLabel}`;
             const html =
               `<h3>Revisión de la oferta</h3>` +
               `<p><strong>Código:</strong> ${previewCode}</p>` +
@@ -1756,7 +2077,7 @@ const solicitudesController = {
               `<p><strong>Tipo:</strong> ${s.tipo_solicitud || 'N/A'}</p>` +
               `<hr/>` +
               `<p><strong>Fecha límite de entrega:</strong> ${b.fecha_limite_entrega || 'N/A'}</p>` +
-              `<p><strong>Servicio es viable:</strong> ${b.servicio_es_viable ? 'Sí' : 'No'}</p>`;
+              `<p><strong>Concepto final:</strong> ${conceptoLabel}</p>`;
             await sendMail(toEmail, subject, text, html);
           }
         }
@@ -1945,10 +2266,11 @@ const solicitudesController = {
       const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
 
       const [update] = await pool.query(
-        `UPDATE seguimiento_encuesta SET fecha_encuesta = ?, comentarios = ?, recomendaria_servicio = ?, cliente_respondio = ?, solicito_nueva_encuesta = ?
+        `UPDATE seguimiento_encuesta SET fecha_encuesta = ?, fecha_realizacion_encuesta = ?, comentarios = ?, recomendaria_servicio = ?, cliente_respondio = ?, solicito_nueva_encuesta = ?
          WHERE id_solicitud = ?`,
         [
           b.fecha_encuesta || null,
+          b.fecha_realizacion_encuesta || null,
           b.comentarios || null,
           b.recomendaria_servicio ? 1 : 0,
           b.cliente_respondio ? 1 : 0,
@@ -1961,11 +2283,12 @@ const solicitudesController = {
       if (!update.affectedRows) {
         isInsert = true;
         await pool.query(
-          `INSERT INTO seguimiento_encuesta (id_solicitud, fecha_encuesta, comentarios, recomendaria_servicio, cliente_respondio, solicito_nueva_encuesta)
-           VALUES (?,?,?,?,?,?)`,
+          `INSERT INTO seguimiento_encuesta (id_solicitud, fecha_encuesta, fecha_realizacion_encuesta, comentarios, recomendaria_servicio, cliente_respondio, solicito_nueva_encuesta)
+           VALUES (?,?,?,?,?,?,?)`,
           [
             id_solicitud,
             b.fecha_encuesta || null,
+            b.fecha_realizacion_encuesta || null,
             b.comentarios || null,
             b.recomendaria_servicio ? 1 : 0,
             b.cliente_respondio ? 1 : 0,
@@ -1996,6 +2319,7 @@ const solicitudesController = {
            
            const datosNuevos = {
              fecha_encuesta: b.fecha_encuesta,
+             fecha_realizacion_encuesta: b.fecha_realizacion_encuesta,
              comentarios: b.comentarios,
              recomendaria_servicio: b.recomendaria_servicio ? 1 : 0,
              cliente_respondio: b.cliente_respondio ? 1 : 0,

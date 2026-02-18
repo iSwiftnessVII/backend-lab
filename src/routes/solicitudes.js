@@ -20,11 +20,14 @@ router.delete('/documentos/plantillas/:id', verifyToken, solicitudesController.e
 router.post('/documentos/plantillas/:id/generar', verifyToken, solicitudesController.generarDocumentoDesdePlantilla);
 
 // ---------- SOLICITUDES CRUD ----------
+router.get('/estados', verifyToken, solicitudesController.getEstadosSolicitud);
 router.get('/', solicitudesController.getSolicitudes);
 router.post('/', verifyToken, solicitudesController.createSolicitud);
 router.get('/:id', solicitudesController.getSolicitudById);
 router.put('/:id', verifyToken, solicitudesController.updateSolicitud);
 router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
+router.patch('/:id/estado', verifyToken, solicitudesController.updateSolicitudEstado);
+router.patch('/:id/asignacion', verifyToken, solicitudesController.updateSolicitudAsignacion);
 
 // Endpoints de detalle
 router.get('/detalle/lista', solicitudesController.getSolicitudesDetalle);
