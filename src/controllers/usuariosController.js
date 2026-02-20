@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const { AUX_MODULES } = require('../middleware/auxPerm');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
@@ -8,6 +8,26 @@ const SALT_ROUNDS = 10;
 const AUX_MODULE_KEYS = Array.from(AUX_MODULES);
 
 const usuariosController = {
+
+    /* PATCH /api/usuarios/nombre/:id - Cambiar nombre de usuario */
+    cambiarNombre: async (req, res) => {
+      const { id } = req.params;
+      const { nombre } = req.body || {};
+      if (!nombre || typeof nombre !== 'string' || !nombre.trim() || nombre.length > 150) {
+        return res.status(400).json({ message: 'Nombre es requerido y debe tener máximo 150 caracteres' });
+      }
+      try {
+        const [userCheck] = await pool.query('SELECT id_usuario FROM usuarios WHERE id_usuario = ?', [id]);
+        if (!userCheck.length) {
+          return res.status(404).json({ message: 'Usuario no encontrado' });
+        }
+        await pool.query('UPDATE usuarios SET nombre = ? WHERE id_usuario = ?', [nombre.trim(), id]);
+        res.json({ message: 'Nombre actualizado correctamente' });
+      } catch (err) {
+        console.error('Error PATCH /nombre/:id:', err);
+        res.status(500).json({ message: 'Error actualizando nombre' });
+      }
+    },
   /* GET /api/usuarios/roles - Listar todos los roles */
   getRoles: async (req, res) => {
     try {
@@ -26,6 +46,7 @@ const usuariosController = {
         SELECT 
           u.id_usuario,
           u.email,
+          u.nombre,
           u.rol_id,
           u.estado,
           u.created_at,
@@ -43,12 +64,13 @@ const usuariosController = {
 
   /* POST /api/usuarios/crear - Crear nuevo usuario */
   crearUsuario: async (req, res) => {
-    const { email, contrasena, rol_id } = req.body || {};
+
+    const { email, nombre, contrasena, rol_id } = req.body || {};
 
     // Validaciones
-    if (!email || !contrasena || !rol_id) {
+    if (!email || !nombre || !contrasena || !rol_id) {
       return res.status(400).json({
-        message: 'Email, contraseña y rol son requeridos'
+        message: 'Email, nombre, contraseña y rol son requeridos'
       });
     }
 
@@ -61,6 +83,10 @@ const usuariosController = {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ message: 'Email no válido' });
+    }
+
+    if (typeof nombre !== 'string' || !nombre.trim() || nombre.length > 150) {
+      return res.status(400).json({ message: 'Nombre es requerido y debe tener máximo 150 caracteres' });
     }
 
     try {
@@ -91,8 +117,8 @@ const usuariosController = {
 
       // Insertar usuario
       const [result] = await pool.query(
-        'INSERT INTO usuarios (email, contrasena, rol_id, estado) VALUES (?, ?, ?, ?)',
-        [email.toLowerCase().trim(), hashedPassword, rol_id, 'ACTIVO']
+        'INSERT INTO usuarios (email, nombre, contrasena, rol_id, estado) VALUES (?, ?, ?, ?, ?)',
+        [email.toLowerCase().trim(), nombre.trim(), hashedPassword, rol_id, 'ACTIVO']
       );
 
       // Log auditoría
@@ -113,6 +139,7 @@ const usuariosController = {
         message: 'Usuario creado correctamente',
         id_usuario: result.insertId,
         email: email.toLowerCase().trim(),
+        nombre: nombre.trim(),
         rol_id
       });
     } catch (err) {

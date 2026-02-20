@@ -1,7 +1,11 @@
+
 const express = require('express');
 const router = express.Router();
 const usuariosController = require('../controllers/usuariosController');
 const { verifyToken } = require('../middleware/jwt');
+
+/* PATCH /api/usuarios/nombre/:id - Cambiar nombre de usuario */
+router.patch('/nombre/:id', verifyToken, usuariosController.cambiarNombre);
 
 /* GET /api/usuarios/roles - Listar todos los roles */
 router.get('/roles', verifyToken, usuariosController.getRoles);

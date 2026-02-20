@@ -1,4 +1,4 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
@@ -28,7 +28,7 @@ const authController = {
     try {
       // INCLUIR el rol en la consulta
       const [rows] = await pool.query(
-        `SELECT u.id_usuario, u.contrasena, u.estado, r.nombre as rol_nombre, r.id_rol 
+        `SELECT u.id_usuario, u.nombre, u.contrasena, u.estado, r.nombre as rol_nombre, r.id_rol 
          FROM usuarios u 
          JOIN roles r ON u.rol_id = r.id_rol 
          WHERE u.email = ?`,
@@ -72,6 +72,7 @@ const authController = {
       res.json({ 
         id_usuario: user.id_usuario, 
         email: email,
+        nombre: user.nombre,
         rol: user.rol_nombre,
         id_rol: user.id_rol,
         token: token
@@ -104,7 +105,7 @@ const authController = {
       
       // Verificar que el usuario aún existe en la BD
       const [rows] = await pool.query(
-        `SELECT u.id_usuario, u.email, u.estado, r.nombre as rol_nombre, r.id_rol 
+        `SELECT u.id_usuario, u.email, u.nombre, u.estado, r.nombre as rol_nombre, r.id_rol 
          FROM usuarios u 
          JOIN roles r ON u.rol_id = r.id_rol 
          WHERE u.id_usuario = ? AND u.estado = 'ACTIVO'`,
@@ -119,6 +120,7 @@ const authController = {
       return res.json({ 
         id: user.id_usuario, 
         email: user.email,
+        nombre: user.nombre,
         rol: user.rol_nombre,
         id_rol: user.id_rol
       });

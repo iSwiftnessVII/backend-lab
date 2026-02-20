@@ -21,17 +21,17 @@ router.post('/documentos/plantillas/:id/generar', verifyToken, solicitudesContro
 
 // ---------- SOLICITUDES CRUD ----------
 router.get('/estados', verifyToken, solicitudesController.getEstadosSolicitud);
-router.get('/', solicitudesController.getSolicitudes);
+router.get('/', verifyToken, solicitudesController.getSolicitudes);
 router.post('/', verifyToken, solicitudesController.createSolicitud);
-router.get('/:id', solicitudesController.getSolicitudById);
+router.get('/:id', verifyToken, solicitudesController.getSolicitudById);
 router.put('/:id', verifyToken, solicitudesController.updateSolicitud);
 router.delete('/:id', verifyToken, solicitudesController.deleteSolicitud);
 router.patch('/:id/estado', verifyToken, solicitudesController.updateSolicitudEstado);
 router.patch('/:id/asignacion', verifyToken, solicitudesController.updateSolicitudAsignacion);
 
 // Endpoints de detalle
-router.get('/detalle/lista', solicitudesController.getSolicitudesDetalle);
-router.get('/detalle/:id', solicitudesController.getSolicitudDetalleById);
+router.get('/detalle/lista', verifyToken, solicitudesController.getSolicitudesDetalle);
+router.get('/detalle/:id', verifyToken, solicitudesController.getSolicitudDetalleById);
 
 // Encuesta
 router.post('/encuestas', verifyToken, solicitudesController.createEncuesta);

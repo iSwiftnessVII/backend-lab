@@ -1228,6 +1228,15 @@ const solicitudesController = {
   // ---------- SOLICITUDES CRUD ----------
   getSolicitudes: async (req, res) => {
     try {
+      const isAdmin = req.user && req.user.rol === 'Administrador';
+      const params = [];
+      const where = isAdmin ? 'WHERE s.id_admin = ?' : '';
+      if (isAdmin) {
+        if (!Number.isFinite(Number(req.user.id))) {
+          return res.status(403).json({ message: 'No autorizado' });
+        }
+        params.push(Number(req.user.id));
+      }
       const [rows] = await pool.query(
         `SELECT 
             s.solicitud_id, s.id_cliente, s.id_estado, s.id_admin, s.tipo_solicitud, s.nombre_muestra, s.fecha_solicitud, s.lote_producto,
@@ -1240,8 +1249,10 @@ const solicitudesController = {
          LEFT JOIN clientes u ON s.id_cliente = u.id_cliente
          LEFT JOIN estados_solicitud es ON s.id_estado = es.id_estado
          LEFT JOIN usuarios ua ON s.id_admin = ua.id_usuario
+         ${where}
          ORDER BY s.solicitud_id DESC
-         LIMIT 500`
+         LIMIT 500`,
+        params
       );
       res.json(rows);
     } catch (err) {
@@ -1253,6 +1264,15 @@ const solicitudesController = {
   // Joined detail list: Solicitudes + oferta + revision_oferta + seguimiento_encuesta
   getSolicitudesDetalle: async (req, res) => {
     try {
+      const isAdmin = req.user && req.user.rol === 'Administrador';
+      const params = [];
+      const where = isAdmin ? 'WHERE s.id_admin = ?' : '';
+      if (isAdmin) {
+        if (!Number.isFinite(Number(req.user.id))) {
+          return res.status(403).json({ message: 'No autorizado' });
+        }
+        params.push(Number(req.user.id));
+      }
       const [rows] = await pool.query(
         `SELECT 
            s.solicitud_id,
@@ -1309,8 +1329,10 @@ const solicitudesController = {
          LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
          LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
          LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
+         ${where}
          ORDER BY s.solicitud_id DESC
-         LIMIT 500`
+         LIMIT 500`,
+        params
       );
       res.json(rows || []);
     } catch (err) {
@@ -1322,6 +1344,17 @@ const solicitudesController = {
   getSolicitudDetalleById: async (req, res) => {
     const id = req.params.id;
     try {
+      const isAdmin = req.user && req.user.rol === 'Administrador';
+      const params = [];
+      let where = 'WHERE s.solicitud_id = ?';
+      params.push(id);
+      if (isAdmin) {
+        if (!Number.isFinite(Number(req.user.id))) {
+          return res.status(403).json({ message: 'No autorizado' });
+        }
+        where += ' AND s.id_admin = ?';
+        params.push(Number(req.user.id));
+      }
       const [rows] = await pool.query(
         `SELECT 
            s.solicitud_id,
@@ -1378,9 +1411,9 @@ const solicitudesController = {
          LEFT JOIN oferta o ON o.id_solicitud = s.solicitud_id
          LEFT JOIN revision_oferta r ON r.id_solicitud = s.solicitud_id
          LEFT JOIN seguimiento_encuesta e ON e.id_solicitud = s.solicitud_id
-         WHERE s.solicitud_id = ?
+         ${where}
          LIMIT 1`,
-        [id]
+        params
       );
       if (!rows || rows.length === 0) return res.status(404).json({ message: 'Solicitud no encontrada' });
       res.json(rows[0]);
@@ -1583,9 +1616,20 @@ const solicitudesController = {
   getSolicitudById: async (req, res) => {
     const id = req.params.id;
     try {
+      const isAdmin = req.user && req.user.rol === 'Administrador';
+      const params = [];
+      let where = 'WHERE s.solicitud_id = ?';
+      params.push(id);
+      if (isAdmin) {
+        if (!Number.isFinite(Number(req.user.id))) {
+          return res.status(403).json({ message: 'No autorizado' });
+        }
+        where += ' AND s.id_admin = ?';
+        params.push(Number(req.user.id));
+      }
       const [rows] = await pool.query(
-        `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN clientes u ON s.id_cliente = u.id_cliente WHERE s.solicitud_id = ?`,
-        [id]
+        `SELECT s.*, u.nombre_solicitante, u.correo_electronico FROM Solicitudes s LEFT JOIN clientes u ON s.id_cliente = u.id_cliente ${where}`,
+        params
       );
       if (!rows.length) return res.status(404).json({ message: 'Not found' });
       res.json(rows[0]);
@@ -1599,6 +1643,9 @@ const solicitudesController = {
     const id = req.params.id;
     const body = req.body || {};
     try {
+      if (req.user && req.user.rol === 'Administrador') {
+        return res.status(403).json({ message: 'No tienes permisos para editar solicitudes.' });
+      }
       // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM Solicitudes WHERE solicitud_id = ?', [id]);
       if (!rowsCurrent.length) return res.status(404).json({ message: 'Solicitud no encontrada' });
@@ -2354,10 +2401,8 @@ const solicitudesController = {
     const id = req.params.id;
 
     try {
-      if (req.user && req.user.rol !== 'Administrador' && req.user.rol !== 'Superadmin') {
-        return res.status(403).json({ 
-          message: 'No tienes permisos para eliminar solicitudes. Solo administradores pueden realizar esta acción.' 
-        });
+      if (req.user && req.user.rol === 'Administrador') {
+        return res.status(403).json({ message: 'No tienes permisos para eliminar solicitudes.' });
       }
 
       const [result] = await pool.query('DELETE FROM Solicitudes WHERE solicitud_id = ?', [id]);
