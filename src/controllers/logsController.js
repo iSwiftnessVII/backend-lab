@@ -5,7 +5,7 @@ const logsController = {
     // Registrar una nueva acción
     crearLog: async (req, res) => {
         try {
-            const { modulo, accion, descripcion, detalle } = req.body;
+            const { modulo, accion, descripcion } = req.body;
             const usuario_id = req.user ? req.user.id : null; // Asumiendo que el middleware auth popula req.user
 
             // Validar campos requeridos
@@ -28,9 +28,9 @@ const logsController = {
             }).format(new Date());
 
             const [result] = await pool.query(
-                `INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) 
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [modulo, accion, usuario_id, fecha, descripcion, JSON.stringify(detalle)]
+                `INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) 
+                 VALUES (?, ?, ?, ?, ?)`,
+                [modulo, accion, usuario_id, fecha, descripcion]
             );
 
             res.status(201).json({

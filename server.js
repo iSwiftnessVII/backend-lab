@@ -1,4 +1,4 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch {}
 
 const express = require('express');
 const cors = require('cors');
@@ -21,6 +21,7 @@ const referenciaRoutes = require('./src/routes/referencia');
 const excelRoutes = require('./src/routes/excel');
 const notificacionesRoutes = require('./src/routes/notificaciones');
 const reactivosController = require('./src/controllers/reactivosController');
+const solicitudesController = require('./src/controllers/solicitudesController');
 
 
 
@@ -267,6 +268,12 @@ if (require.main === module) {
   startServer()
     .then(server => {
       setupGracefulShutdown(server);
+      try {
+        Promise.resolve(solicitudesController.checkRevisionOfertaSchema?.())
+          .catch((err) => console.warn('Error verificando esquema de revisión:', err));
+      } catch (err) {
+        console.warn('Error verificando esquema de revisión:', err);
+      }
       // Ejecutar notificaciones de vencimiento al iniciar y cada 24 horas
       // En modo Desktop (Electron) se deshabilita por defecto para evitar
       // intentos de conexión a DB al arranque (puede no estar disponible).

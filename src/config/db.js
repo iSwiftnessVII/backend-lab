@@ -1,7 +1,5 @@
 const mysql = require("mysql2/promise");
-const dotenv = require("dotenv");
-
-dotenv.config();
+try { require("dotenv").config(); } catch {}
 
 let pool;
 

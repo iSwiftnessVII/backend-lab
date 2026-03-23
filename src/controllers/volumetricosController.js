@@ -68,6 +68,27 @@ function valueToText(v) {
   return String(v);
 }
 
+async function fetchVolumetricoIdentidad(codigo) {
+  const codigoNorm = String(codigo ?? '').trim();
+  if (!codigoNorm) return { codigo: '', nombre: '' };
+  const [rows] = await pool.query(
+    'SELECT codigo_id, nombre_material FROM material_volumetrico WHERE codigo_id = ? LIMIT 1',
+    [codigoNorm]
+  );
+  const row = rows && rows[0] ? rows[0] : {};
+  return {
+    codigo: valueToText(row.codigo_id || codigoNorm).trim(),
+    nombre: valueToText(row.nombre_material).trim()
+  };
+}
+
+function buildPdfVolumetricoDescripcion({ accion, codigo, nombre }) {
+  const accionTxt = String(accion || '').trim();
+  const codigoTxt = String(codigo || '').trim() || 'sin código';
+  const nombreTxt = String(nombre || '').trim() || 'sin nombre';
+  return `${accionTxt} PDF del material volumétrico - código: ${codigoTxt}, nombre: ${nombreTxt}`;
+}
+
 function collectTagsFromText(text) {
   const s = String(text ?? '');
   const tags = new Set();
@@ -513,8 +534,8 @@ exports.crearMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fecha, `Creación de material volumétrico: ${codigo_id}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fecha, `Creación de material volumétrico: ${codigo_id}`]
       );
     }
 
@@ -627,8 +648,6 @@ exports.actualizarMaterial = async (req, res) => {
         }
       }
 
-      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
-
       const fecha = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
         year: 'numeric', month: '2-digit', day: '2-digit',
@@ -636,8 +655,8 @@ exports.actualizarMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de material volumétrico: ${codigo}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de material volumétrico: ${codigo}`]
       );
     }
 
@@ -667,8 +686,8 @@ exports.eliminarMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'ELIMINAR', req.user.id, fecha, `Eliminación de material volumétrico: ${codigo}`, null]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ELIMINAR', req.user.id, fecha, `Eliminación de material volumétrico: ${codigo}`]
       );
     }
     
@@ -716,8 +735,8 @@ exports.crearHistorial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de historial para volumétrico: ${codigo_material}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de historial para volumétrico: ${codigo_material}`]
       );
     }
 
@@ -819,8 +838,6 @@ exports.actualizarHistorial = async (req, res) => {
         }
       }
 
-      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
-      
       const fechaLog = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
         year: 'numeric', month: '2-digit', day: '2-digit',
@@ -828,8 +845,8 @@ exports.actualizarHistorial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de historial para volumétrico: ${codigo}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de historial para volumétrico: ${codigo}`]
       );
     }
 
@@ -898,8 +915,8 @@ exports.crearIntervalo = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de intervalo para volumétrico: ${codigo_material}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'CREAR', req.user.id, fechaLog, `Creación de intervalo para volumétrico: ${codigo_material}`]
       );
     }
 
@@ -1005,8 +1022,6 @@ exports.actualizarIntervalo = async (req, res) => {
         }
       }
 
-      const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
-      
       const fechaLog = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
         year: 'numeric', month: '2-digit', day: '2-digit',
@@ -1014,8 +1029,8 @@ exports.actualizarIntervalo = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de intervalo para volumétrico: ${codigo}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de intervalo para volumétrico: ${codigo}`]
       );
     }
 
@@ -1068,6 +1083,23 @@ exports.subirPdfMaterial = async (req, res) => {
       [codigo, categoria, originalName, buffer]
     );
     const insertedId = result.insertId;
+    if (req.user && req.user.id) {
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      const identidad = await fetchVolumetricoIdentidad(codigo);
+      const descripcion = buildPdfVolumetricoDescripcion({
+        accion: 'Subida de',
+        codigo: identidad.codigo || codigo,
+        nombre: identidad.nombre
+      });
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'SUBIR_PDF', req.user.id, fechaLog, descripcion]
+      );
+    }
     res.status(201).json({ id: insertedId, nombre_archivo: originalName, categoria });
   } catch (error) {
     console.error('Error subir PDF:', error);
@@ -1114,10 +1146,16 @@ exports.eliminarPdf = async (req, res) => {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(new Date());
+      const identidad = await fetchVolumetricoIdentidad(pdfInfo.material_id);
+      const descripcion = buildPdfVolumetricoDescripcion({
+        accion: 'Eliminación de',
+        codigo: identidad.codigo || pdfInfo.material_id,
+        nombre: identidad.nombre
+      });
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_VOLUMETRICOS', 'ELIMINAR', req.user.id, fechaLog, `Eliminación de PDF para volumétrico: ${pdfInfo.material_id}`, JSON.stringify({ id, ...pdfInfo })]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_VOLUMETRICOS', 'ELIMINAR_PDF', req.user.id, fechaLog, descripcion]
       );
     }
 
@@ -1266,6 +1304,17 @@ exports.subirPlantillaDocumentoVolumetrico = async (req, res) => {
         usuarioId
       ]
     );
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'SUBIR_PLANTILLA', 'VOLUMETRICOS', fecha, `Subir plantilla de volumétricos: ${nombre}`]
+      );
+    }
 
     return res.status(201).json({
       id: result.insertId,
@@ -1290,6 +1339,17 @@ exports.eliminarPlantillaDocumentoVolumetrico = async (req, res) => {
 
     const [result] = await pool.query('DELETE FROM plantillas_documento_volumetricos WHERE id = ?', [id]);
     if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PLANTILLA', 'VOLUMETRICOS', fecha, `Eliminar plantilla de volumétricos: ${id}`]
+      );
+    }
     return res.json({ ok: true });
   } catch (err) {
     console.error('Error DELETE /volumetricos/documentos/plantillas/:id:', err);

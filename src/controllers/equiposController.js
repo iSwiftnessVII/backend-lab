@@ -56,6 +56,29 @@ function valueToText(v) {
   return String(v);
 }
 
+async function fetchEquipoIdentidad(codigo) {
+  const codigoNorm = String(codigo ?? '').trim();
+  if (!codigoNorm) return { codigo: '', nombre: '' };
+  const [rows] = await pool.query(
+    'SELECT codigo_identificacion, nombre FROM hv_equipos WHERE codigo_identificacion = ? LIMIT 1',
+    [codigoNorm]
+  );
+  const row = rows && rows[0] ? rows[0] : {};
+  return {
+    codigo: valueToText(row.codigo_identificacion || codigoNorm).trim(),
+    nombre: valueToText(row.nombre).trim()
+  };
+}
+
+function buildPdfEquipoDescripcion({ accion, codigo, nombre, archivo }) {
+  const accionTxt = String(accion || '').trim();
+  const codigoTxt = String(codigo || '').trim() || 'sin código';
+  const nombreTxt = String(nombre || '').trim() || 'sin nombre';
+  const archivoTxt = String(archivo || '').trim();
+  const archivoPart = archivoTxt ? `, archivo: ${archivoTxt}` : '';
+  return `${accionTxt} PDF del equipo - código: ${codigoTxt}, nombre: ${nombreTxt}${archivoPart}`;
+}
+
 function collectTagsFromText(text) {
   const s = String(text ?? '');
   const tags = new Set();
@@ -865,7 +888,6 @@ exports.actualizarEquipo = async (req, res) => {
       await conn.commit();
 
       // 4. Calcular diferencias
-      let detallesCambios = null;
       const cambios = {};
       
       const normalize = (val) => {
@@ -888,10 +910,6 @@ exports.actualizarEquipo = async (req, res) => {
         }
       }
 
-      if (Object.keys(cambios).length > 0) {
-        detallesCambios = JSON.stringify(cambios);
-      }
-
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
           timeZone: 'America/Bogota',
@@ -901,8 +919,8 @@ exports.actualizarEquipo = async (req, res) => {
         
         // Usamos pool para el log, independiente de la transacción principal
         await pool.query(
-          'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-          ['EQUIPOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de equipo: ${codigo}`, detallesCambios]
+          'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          ['EQUIPOS', 'ACTUALIZAR', req.user.id, fecha, `Actualización de equipo: ${codigo}`]
         );
       }
 
@@ -1464,6 +1482,17 @@ exports.subirPlantillaDocumentoEquipo = async (req, res) => {
         usuarioId
       ]
     );
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'SUBIR_PLANTILLA', 'EQUIPOS', fecha, `Subir plantilla de equipos: ${nombre}`]
+      );
+    }
 
     return res.status(201).json({
       id: result.insertId,
@@ -1488,6 +1517,17 @@ exports.eliminarPlantillaDocumentoEquipo = async (req, res) => {
 
     const [result] = await pool.query('DELETE FROM plantillas_documento_equipos WHERE id = ?', [id]);
     if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PLANTILLA', 'EQUIPOS', fecha, `Eliminar plantilla de equipos: ${id}`]
+      );
+    }
     return res.json({ ok: true });
   } catch (err) {
     console.error('Error DELETE /equipos/documentos/plantillas/:id:', err);
@@ -1726,6 +1766,24 @@ exports.subirPdfEquipo = async (req, res) => {
     const metaPath = path.join(dir, filename + '.meta.json');
     try { await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8'); } catch (e) { console.warn('No se pudo escribir meta', e); }
     const stat = await fs.stat(full);
+    if (req.user && req.user.id) {
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      const identidad = await fetchEquipoIdentidad(codigo);
+      const descripcion = buildPdfEquipoDescripcion({
+        accion: 'Subida de',
+        codigo: identidad.codigo || codigo,
+        nombre: identidad.nombre,
+        archivo: originalName
+      });
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['EQUIPOS', 'SUBIR_PDF', req.user.id, fechaLog, descripcion]
+      );
+    }
     const item = { id: filename, nombre_archivo: originalName, categoria: categoria || null, size_bytes: stat.size, mime: req.file.mimetype || 'application/pdf', url: `/api/equipos/pdfs/download/${encodeURIComponent(filename)}`, fecha_subida: stat.mtime };
     res.status(201).json(item);
   } catch (error) {
@@ -1777,20 +1835,44 @@ exports.eliminarPdf = async (req, res) => {
     const { id } = req.params;
     const base = UPLOADS_BASE;
     let found = null;
+    let foundCodigo = '';
     try {
       const dirs = await fs.readdir(base);
       for (const d of dirs) {
         const candidate = path.join(base, d, id);
         try {
           const stat = await fs.stat(candidate);
-          if (stat && stat.isFile()) { found = candidate; break; }
+          if (stat && stat.isFile()) {
+            found = candidate;
+            foundCodigo = String(d);
+            break;
+          }
         } catch (_) { }
       }
     } catch (e) {
       // base may not exist
     }
     if (!found) return res.status(404).json({ message: 'Archivo no encontrado' });
+    const originalName = String(id || '').replace(/^\d+_/, '');
     await fs.unlink(found);
+    if (req.user && req.user.id) {
+      const fechaLog = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      const identidad = await fetchEquipoIdentidad(foundCodigo);
+      const descripcion = buildPdfEquipoDescripcion({
+        accion: 'Eliminación de',
+        codigo: identidad.codigo || foundCodigo,
+        nombre: identidad.nombre,
+        archivo: originalName
+      });
+      await pool.query(
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['EQUIPOS', 'ELIMINAR_PDF', req.user.id, fechaLog, descripcion]
+      );
+    }
     res.json({ message: 'Archivo eliminado' });
   } catch (error) {
     console.error('Error eliminarPdf:', error);

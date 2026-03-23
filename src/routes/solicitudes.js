@@ -10,6 +10,8 @@ router.get('/ciudades', solicitudesController.getCiudades);
 
 // ---------- CLIENTES CRUD ----------
 router.get('/clientes', solicitudesController.getClientes);
+router.get('/clientes/export/excel', verifyToken, solicitudesController.exportClientesExcel);
+router.get('/clientes-solicitudes/export/excel', verifyToken, solicitudesController.exportClientesSolicitudesExcel);
 router.post('/clientes', verifyToken, solicitudesController.createCliente);
 router.get('/clientes/:id', solicitudesController.getClienteById);
 router.put('/clientes/:id', verifyToken, solicitudesController.updateCliente);
@@ -21,6 +23,7 @@ router.post('/documentos/plantillas/:id/generar', verifyToken, solicitudesContro
 
 // ---------- SOLICITUDES CRUD ----------
 router.get('/estados', verifyToken, solicitudesController.getEstadosSolicitud);
+router.get('/export/excel', verifyToken, solicitudesController.exportSolicitudesExcel);
 router.get('/', verifyToken, solicitudesController.getSolicitudes);
 router.post('/', verifyToken, solicitudesController.createSolicitud);
 router.get('/:id', verifyToken, solicitudesController.getSolicitudById);

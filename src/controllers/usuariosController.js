@@ -1,11 +1,18 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
-const { AUX_MODULES } = require('../middleware/auxPerm');
+const { AUX_MODULES, ADMIN_MODULES } = require('../middleware/auxPerm');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 
 const SALT_ROUNDS = 10;
 const AUX_MODULE_KEYS = Array.from(AUX_MODULES);
+const ADMIN_MODULE_KEYS = Array.from(ADMIN_MODULES);
+
+function getModuleKeysByRole(roleName) {
+  if (roleName === 'Auxiliar') return AUX_MODULE_KEYS;
+  if (roleName === 'Administrador') return ADMIN_MODULE_KEYS;
+  return [];
+}
 
 const usuariosController = {
 
@@ -130,8 +137,8 @@ const usuariosController = {
          }).format(new Date());
 
          await pool.query(
-            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-            [req.user.id, 'CREAR', 'USUARIOS', fecha, `Creación de usuario: ${email.toLowerCase().trim()}`, JSON.stringify({ rol_id, estado: 'ACTIVO' })]
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+            [req.user.id, 'CREAR', 'USUARIOS', fecha, `Creación de usuario: ${email.toLowerCase().trim()}`]
          );
       }
 
@@ -192,8 +199,8 @@ const usuariosController = {
              }).format(new Date());
 
              await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-                [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de estado usuario: ${id}`, JSON.stringify(cambios)]
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+                [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de estado usuario: ${id}`]
              );
         }
       }
@@ -321,8 +328,8 @@ const usuariosController = {
                }).format(new Date());
 
                await pool.query(
-                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-                  [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de rol usuario: ${id}`, JSON.stringify(cambios)]
+                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+                  [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de rol usuario: ${id}`]
                );
           }
       }
@@ -365,10 +372,6 @@ const usuariosController = {
       );
 
       if (req.user && req.user.id) {
-         const cambios = {
-           contrasena: { anterior: '********', nuevo: '********' }
-         };
-
          const fecha = new Intl.DateTimeFormat('sv-SE', {
             timeZone: 'America/Bogota',
             year: 'numeric', month: '2-digit', day: '2-digit',
@@ -376,8 +379,8 @@ const usuariosController = {
          }).format(new Date());
 
          await pool.query(
-            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-            [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de contraseña usuario: ${id}`, JSON.stringify(cambios)]
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+            [req.user.id, 'ACTUALIZAR', 'USUARIOS', fecha, `Cambio de contraseña usuario: ${id}`]
          );
       }
       res.json({ message: 'Contraseña actualizada correctamente' });
@@ -392,25 +395,34 @@ const usuariosController = {
     const { id } = req.params;
 
     if (req.user.rol !== 'Superadmin' && Number(req.user.id) !== Number(id)) {
-      return res.status(403).json({ message: 'No tienes permisos para ver permisos auxiliares' });
+      return res.status(403).json({ message: 'No tienes permisos para ver permisos de usuario' });
     }
 
     try {
       const [userCheck] = await pool.query(
-        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        `SELECT u.id_usuario, r.nombre AS rol_nombre
+         FROM usuarios u
+         LEFT JOIN roles r ON r.id_rol = u.rol_id
+         WHERE u.id_usuario = ?`,
         [id]
       );
       if (!userCheck.length) {
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
 
+      const targetRole = userCheck[0].rol_nombre || '';
+      const allowedKeys = getModuleKeysByRole(targetRole);
+      if (!allowedKeys.length) {
+        return res.json({ usuario_id: Number(id), permisos: {} });
+      }
+
       const [rows] = await pool.query(
         'SELECT modulo, puede_editar FROM usuarios_permisos WHERE usuario_id = ? AND modulo IN (?)',
-        [id, AUX_MODULE_KEYS]
+        [id, allowedKeys]
       );
 
       const permisos = {};
-      for (const key of AUX_MODULE_KEYS) permisos[key] = true;
+      for (const key of allowedKeys) permisos[key] = true;
       for (const row of rows) {
         permisos[row.modulo] = Number(row.puede_editar) === 1;
       }
@@ -418,14 +430,14 @@ const usuariosController = {
       res.json({ usuario_id: Number(id), permisos });
     } catch (err) {
       console.error('Error GET /permisos/:id:', err);
-      res.status(500).json({ message: 'Error obteniendo permisos auxiliares' });
+      res.status(500).json({ message: 'Error obteniendo permisos de usuario' });
     }
   },
 
   /* GET /api/usuarios/permisos?ids=1,2,3 - Obtener permisos auxiliares por lote */
   getPermisosAuxiliaresBatch: async (req, res) => {
     if (req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ message: 'No tienes permisos para ver permisos auxiliares' });
+      return res.status(403).json({ message: 'No tienes permisos para ver permisos de usuario' });
     }
 
     const idsParam = req.query.ids || '';
@@ -441,31 +453,43 @@ const usuariosController = {
 
     try {
       const [userRows] = await pool.query(
-        'SELECT id_usuario FROM usuarios WHERE id_usuario IN (?)',
+        `SELECT u.id_usuario, r.nombre AS rol_nombre
+         FROM usuarios u
+         LEFT JOIN roles r ON r.id_rol = u.rol_id
+         WHERE u.id_usuario IN (?)`,
         [uniqueIds]
       );
 
-      const validIds = (userRows || []).map((r) => Number(r.id_usuario)).filter((v) => Number.isFinite(v));
+      const userById = {};
+      for (const row of userRows || []) {
+        const uid = Number(row.id_usuario);
+        if (!Number.isFinite(uid)) continue;
+        userById[uid] = row.rol_nombre || '';
+      }
+
+      const validIds = Object.keys(userById).map((k) => Number(k)).filter((v) => Number.isFinite(v));
       if (!validIds.length) {
         return res.json({ rows: [] });
       }
 
+      const allAllowedKeys = Array.from(new Set([...AUX_MODULE_KEYS, ...ADMIN_MODULE_KEYS]));
       const [rows] = await pool.query(
         'SELECT usuario_id, modulo, puede_editar FROM usuarios_permisos WHERE usuario_id IN (?) AND modulo IN (?)',
-        [validIds, AUX_MODULE_KEYS]
+        [validIds, allAllowedKeys]
       );
-
-      const basePerms = {};
-      for (const key of AUX_MODULE_KEYS) basePerms[key] = true;
 
       const map = {};
       for (const id of validIds) {
-        map[id] = { ...basePerms };
+        const roleName = userById[id] || '';
+        const keys = getModuleKeysByRole(roleName);
+        map[id] = {};
+        for (const key of keys) map[id][key] = true;
       }
 
       for (const row of rows || []) {
         const uid = Number(row.usuario_id);
-        if (!map[uid]) map[uid] = { ...basePerms };
+        if (!map[uid]) continue;
+        if (!Object.prototype.hasOwnProperty.call(map[uid], row.modulo)) continue;
         map[uid][row.modulo] = Number(row.puede_editar) === 1;
       }
 
@@ -473,7 +497,7 @@ const usuariosController = {
       res.json({ rows: payload });
     } catch (err) {
       console.error('Error GET /permisos (batch):', err);
-      res.status(500).json({ message: 'Error obteniendo permisos auxiliares' });
+      res.status(500).json({ message: 'Error obteniendo permisos de usuario' });
     }
   },
 
@@ -483,7 +507,7 @@ const usuariosController = {
     const { permisos } = req.body || {};
 
     if (req.user.rol !== 'Superadmin') {
-      return res.status(403).json({ message: 'No tienes permisos para cambiar permisos auxiliares' });
+      return res.status(403).json({ message: 'No tienes permisos para cambiar permisos de usuario' });
     }
 
     if (!permisos || typeof permisos !== 'object') {
@@ -492,15 +516,24 @@ const usuariosController = {
 
     try {
       const [userCheck] = await pool.query(
-        'SELECT id_usuario FROM usuarios WHERE id_usuario = ?',
+        `SELECT u.id_usuario, r.nombre AS rol_nombre
+         FROM usuarios u
+         LEFT JOIN roles r ON r.id_rol = u.rol_id
+         WHERE u.id_usuario = ?`,
         [id]
       );
       if (!userCheck.length) {
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
 
+      const targetRole = userCheck[0].rol_nombre || '';
+      const allowedKeys = getModuleKeysByRole(targetRole);
+      if (!allowedKeys.length) {
+        return res.status(400).json({ message: 'Este rol no tiene permisos configurables' });
+      }
+
       const updates = [];
-      for (const key of AUX_MODULE_KEYS) {
+      for (const key of allowedKeys) {
         if (Object.prototype.hasOwnProperty.call(permisos, key)) {
           const puedeEditar = permisos[key] ? 1 : 0;
           updates.push(pool.query(
@@ -513,10 +546,10 @@ const usuariosController = {
 
       await Promise.all(updates);
 
-      res.json({ message: 'Permisos auxiliares actualizados' });
+      res.json({ message: 'Permisos de usuario actualizados' });
     } catch (err) {
       console.error('Error PATCH /permisos/:id:', err);
-      res.status(500).json({ message: 'Error actualizando permisos auxiliares' });
+      res.status(500).json({ message: 'Error actualizando permisos de usuario' });
     }
   }
 };

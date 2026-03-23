@@ -93,6 +93,43 @@ function valueToText(v) {
   return String(v);
 }
 
+async function fetchReactivoIdentidadByLote(lote) {
+  const loteNorm = String(lote || '').trim();
+  if (!loteNorm) return { lote: '', codigo: '', nombre: '' };
+  const [rows] = await pool.query(
+    `
+      SELECT
+        r.lote,
+        r.codigo,
+        COALESCE(NULLIF(TRIM(r.nombre), ''), NULLIF(TRIM(c.nombre), '')) AS nombre
+      FROM reactivos r
+      LEFT JOIN catalogo_reactivos c ON c.codigo = r.codigo
+      WHERE r.lote = ?
+      ORDER BY r.fecha_creacion DESC
+      LIMIT 1
+    `,
+    [loteNorm]
+  );
+  const row = rows && rows[0] ? rows[0] : {};
+  return {
+    lote: valueToText(row.lote || loteNorm).trim(),
+    codigo: valueToText(row.codigo).trim(),
+    nombre: valueToText(row.nombre).trim()
+  };
+}
+
+function buildPdfReactivoDescripcion({ accion, documento, lote, codigo, nombre }) {
+  const accionTxt = String(accion || '').trim();
+  const docTxt = String(documento || '').trim();
+  const loteTxt = String(lote || '').trim();
+  const codigoTxt = String(codigo || '').trim();
+  const nombreTxt = String(nombre || '').trim();
+  const lotePart = loteTxt || 'sin lote';
+  const nombrePart = nombreTxt || 'sin nombre';
+  const codigoPart = codigoTxt ? `, código: ${codigoTxt}` : '';
+  return `${accionTxt} ${docTxt} del reactivo - lote: ${lotePart}, nombre: ${nombrePart}${codigoPart}`;
+}
+
 async function fetchReactivoDTO({ codigo, lote }) {
   const loteNorm = String(lote || '').trim();
   const codigoNorm = String(codigo || '').trim();
@@ -854,8 +891,6 @@ const reactivosController = {
           }
         }
 
-        const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
-        
         const fecha = new Intl.DateTimeFormat('sv-SE', {
           timeZone: 'America/Bogota',
           year: 'numeric', month: '2-digit', day: '2-digit',
@@ -863,8 +898,8 @@ const reactivosController = {
         }).format(new Date());
 
         await pool.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS', fecha, `Actualización de catálogo: ${codigo}`, detallesCambios]
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ACTUALIZAR', 'CATALOGO_REACTIVOS', fecha, `Actualización de catálogo: ${codigo}`]
         );
       }
       
@@ -1049,9 +1084,17 @@ deleteCatalogo: async (req, res) => {
                 year: 'numeric', month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit', second: '2-digit'
             }).format(new Date());
+            const identidad = await fetchReactivoIdentidadByLote(lote);
+            const descripcion = buildPdfReactivoDescripcion({
+              accion: 'Subida de',
+              documento: 'hoja de seguridad',
+              lote: identidad.lote || lote,
+              codigo: identidad.codigo,
+              nombre: identidad.nombre
+            });
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-                [req.user.id, 'SUBIR_PDF', 'REACTIVOS', fecha]
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+                [req.user.id, 'SUBIR_PDF', 'REACTIVOS', fecha, descripcion]
             );
         }
 
@@ -1074,9 +1117,17 @@ deleteCatalogo: async (req, res) => {
 
         // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
+            const identidad = await fetchReactivoIdentidadByLote(lote);
+            const descripcion = buildPdfReactivoDescripcion({
+              accion: 'Eliminación de',
+              documento: 'hoja de seguridad',
+              lote: identidad.lote || lote,
+              codigo: identidad.codigo,
+              nombre: identidad.nombre
+            });
             await pool.query(
-                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
-                [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS']
+                'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+                [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS', descripcion]
             );
         }
 
@@ -1207,9 +1258,17 @@ deleteCatalogo: async (req, res) => {
 
     // REGISTRO DE LOG - MODIFICAR
     if (req.user && req.user.id) {
+      const identidad = await fetchReactivoIdentidadByLote(lote);
+      const descripcion = buildPdfReactivoDescripcion({
+        accion: 'Subida de',
+        documento: 'certificado de análisis',
+        lote: identidad.lote || lote,
+        codigo: identidad.codigo,
+        nombre: identidad.nombre
+      });
       await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR))',
-        [req.user.id, 'SUBIR_PDF', 'REACTIVOS']
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+        [req.user.id, 'SUBIR_PDF', 'REACTIVOS', descripcion]
       );
     }
 
@@ -1242,9 +1301,17 @@ deleteCatalogo: async (req, res) => {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(new Date());
+      const identidad = await fetchReactivoIdentidadByLote(lote);
+      const descripcion = buildPdfReactivoDescripcion({
+        accion: 'Eliminación de',
+        documento: 'certificado de análisis',
+        lote: identidad.lote || lote,
+        codigo: identidad.codigo,
+        nombre: identidad.nombre
+      });
       await pool.query(
-        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha) VALUES (?, ?, ?, ?)',
-        [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS', fecha]
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PDF', 'REACTIVOS', fecha, descripcion]
       );
     }
 
@@ -1389,10 +1456,9 @@ deleteCatalogo: async (req, res) => {
       // REGISTRO DE LOG - MODIFICADO
         if (req.user && req.user.id) {
           const desc = `Creación de reactivo: ${lote} (${codigo} - ${nombre})`;
-          const detalle = JSON.stringify({ lote, codigo, nombre });
           await pool.query(
-            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
-            [req.user.id, 'CREAR', 'REACTIVOS', desc, detalle]
+            'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+            [req.user.id, 'CREAR', 'REACTIVOS', desc]
           );
 
             // REGISTRO DE MOVIMIENTO
@@ -1588,11 +1654,9 @@ deleteCatalogo: async (req, res) => {
             }
         }
 
-        const detallesCambios = Object.keys(cambios).length > 0 ? JSON.stringify(cambios) : null;
-        
         await connection.query(
-          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
-          [req.user.id, 'ACTUALIZAR', 'REACTIVOS', `Actualización de reactivo: ${lote}${nuevoLote !== lote ? ` -> ${nuevoLote}` : ''}`, detallesCambios]
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+          [req.user.id, 'ACTUALIZAR', 'REACTIVOS', `Actualización de reactivo: ${lote}${nuevoLote !== lote ? ` -> ${nuevoLote}` : ''}`]
         );
       }
 
@@ -1632,8 +1696,8 @@ deleteCatalogo: async (req, res) => {
         if (req.user && req.user.id) {
             try {
               await pool.query(
-                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion, detalle) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?, ?)',
-                  [req.user.id, 'ELIMINAR', 'REACTIVOS', `Eliminación de reactivo: ${lote}`, JSON.stringify({ lote })]
+                  'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 5 HOUR), ?)',
+                  [req.user.id, 'ELIMINAR', 'REACTIVOS', `Eliminación de reactivo: ${lote}`]
               );
             } catch (errLog) {
               console.error('Error registrando log eliminación reactivo:', errLog);
@@ -1956,6 +2020,17 @@ deleteCatalogo: async (req, res) => {
           usuarioId
         ]
       );
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'SUBIR_PLANTILLA', 'REACTIVOS', fecha, `Subir plantilla de reactivos: ${nombre}`]
+        );
+      }
 
       return res.status(201).json({
         id: result.insertId,
@@ -1980,6 +2055,17 @@ deleteCatalogo: async (req, res) => {
 
       const [result] = await pool.query('DELETE FROM plantillas_documento_reactivos WHERE id = ?', [id]);
       if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+      if (req.user && req.user.id) {
+        const fecha = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Bogota',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(new Date());
+        await pool.query(
+          'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+          [req.user.id, 'ELIMINAR_PLANTILLA', 'REACTIVOS', fecha, `Eliminar plantilla de reactivos: ${id}`]
+        );
+      }
       return res.json({ ok: true });
     } catch (err) {
       console.error('Error DELETE /documentos/plantillas/:id:', err);

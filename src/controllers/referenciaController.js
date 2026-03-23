@@ -56,6 +56,27 @@ function valueToText(v) {
   return String(v);
 }
 
+async function fetchReferenciaIdentidad(codigo) {
+  const codigoNorm = String(codigo ?? '').trim();
+  if (!codigoNorm) return { codigo: '', nombre: '' };
+  const [rows] = await pool.query(
+    'SELECT codigo_id, nombre_material FROM material_referencia WHERE codigo_id = ? LIMIT 1',
+    [codigoNorm]
+  );
+  const row = rows && rows[0] ? rows[0] : {};
+  return {
+    codigo: valueToText(row.codigo_id || codigoNorm).trim(),
+    nombre: valueToText(row.nombre_material).trim()
+  };
+}
+
+function buildPdfReferenciaDescripcion({ accion, codigo, nombre }) {
+  const accionTxt = String(accion || '').trim();
+  const codigoTxt = String(codigo || '').trim() || 'sin código';
+  const nombreTxt = String(nombre || '').trim() || 'sin nombre';
+  return `${accionTxt} PDF del material de referencia - código: ${codigoTxt}, nombre: ${nombreTxt}`;
+}
+
 function collectTagsFromText(text) {
   const s = String(text ?? '');
   const tags = new Set();
@@ -489,8 +510,8 @@ const crearMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'CREAR', req.user.id, fecha, `Creación de material referencia: ${codigo_id}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'CREAR', req.user.id, fecha, `Creación de material referencia: ${codigo_id}`]
       );
     }
 
@@ -529,7 +550,6 @@ const actualizarMaterial = async (req, res) => {
     );
 
     // 4. Calcular diferencias
-    let detallesCambios = null;
     const cambios = {};
     
     const normalize = (val) => {
@@ -552,10 +572,6 @@ const actualizarMaterial = async (req, res) => {
       }
     }
 
-    if (Object.keys(cambios).length > 0) {
-      detallesCambios = JSON.stringify(cambios);
-    }
-
     if (req.user && req.user.id) {
       const fecha = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
@@ -564,8 +580,8 @@ const actualizarMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fecha, `Actualización de material referencia: ${codigo_id}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fecha, `Actualización de material referencia: ${codigo_id}`]
       );
     }
 
@@ -589,8 +605,8 @@ const eliminarMaterial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'ELIMINAR', req.user.id, fecha, `Eliminación de material referencia: ${codigo_id}`, null]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'ELIMINAR', req.user.id, fecha, `Eliminación de material referencia: ${codigo_id}`]
       );
     }
 
@@ -640,10 +656,16 @@ const subirPdfReferencia = async (req, res) => {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(new Date());
+      const identidad = await fetchReferenciaIdentidad(codigo);
+      const descripcion = buildPdfReferenciaDescripcion({
+        accion: 'Subida de',
+        codigo: identidad.codigo || codigo,
+        nombre: identidad.nombre
+      });
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'SUBIR_PDF', req.user.id, fecha, `Subida de PDF para referencia: ${codigo}`, JSON.stringify({ codigo, categoria, nombre_archivo: originalName })]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'SUBIR_PDF', req.user.id, fecha, descripcion]
       );
     }
 
@@ -689,10 +711,16 @@ const eliminarPdfReferencia = async (req, res) => {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(new Date());
+      const identidad = await fetchReferenciaIdentidad(pdfInfo.referencia_id);
+      const descripcion = buildPdfReferenciaDescripcion({
+        accion: 'Eliminación de',
+        codigo: identidad.codigo || pdfInfo.referencia_id,
+        nombre: identidad.nombre
+      });
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'ELIMINAR', req.user.id, fechaLog, `Eliminación de PDF para referencia: ${pdfInfo.referencia_id}`, JSON.stringify({ id, ...pdfInfo })]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'ELIMINAR_PDF', req.user.id, fechaLog, descripcion]
       );
     }
 
@@ -734,8 +762,8 @@ const crearHistorial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'CREAR', req.user.id, fechaLog, `Creación de historial para referencia: ${codigo_material}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'CREAR', req.user.id, fechaLog, `Creación de historial para referencia: ${codigo_material}`]
       );
     }
 
@@ -765,7 +793,6 @@ const actualizarHistorial = async (req, res) => {
     );
 
     // 4. Calcular diferencias
-    let detallesCambios = null;
     const cambios = {};
     
     const normalize = (val) => {
@@ -788,10 +815,6 @@ const actualizarHistorial = async (req, res) => {
       }
     }
 
-    if (Object.keys(cambios).length > 0) {
-      detallesCambios = JSON.stringify(cambios);
-    }
-
     if (req.user && req.user.id) {
       const fechaLog = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
@@ -800,8 +823,8 @@ const actualizarHistorial = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de historial para referencia: ${codigo_material}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de historial para referencia: ${codigo_material}`]
       );
     }
 
@@ -872,8 +895,8 @@ const crearIntervalo = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'CREAR', req.user.id, fechaLog, `Creación de intervalo para referencia: ${codigo_material}`, JSON.stringify(req.body)]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'CREAR', req.user.id, fechaLog, `Creación de intervalo para referencia: ${codigo_material}`]
       );
     }
 
@@ -920,7 +943,6 @@ const actualizarIntervalo = async (req, res) => {
     );
 
     // 4. Calcular diferencias
-    let detallesCambios = null;
     const cambios = {};
     
     const normalize = (val) => {
@@ -943,10 +965,6 @@ const actualizarIntervalo = async (req, res) => {
       }
     }
 
-    if (Object.keys(cambios).length > 0) {
-      detallesCambios = JSON.stringify(cambios);
-    }
-
     if (req.user && req.user.id) {
       const fechaLog = new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'America/Bogota',
@@ -955,8 +973,8 @@ const actualizarIntervalo = async (req, res) => {
       }).format(new Date());
       
       await pool.query(
-        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion, detalle) VALUES (?, ?, ?, ?, ?, ?)',
-        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de intervalo para referencia: ${codigo_material}`, detallesCambios]
+        'INSERT INTO logs_acciones (modulo, accion, usuario_id, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        ['MAT_REFERENCIA', 'ACTUALIZAR', req.user.id, fechaLog, `Actualización de intervalo para referencia: ${codigo_material}`]
       );
     }
 
@@ -1115,6 +1133,17 @@ exports.subirPlantillaDocumentoReferencia = async (req, res) => {
         usuarioId
       ]
     );
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'SUBIR_PLANTILLA', 'REFERENCIA', fecha, `Subir plantilla de referencia: ${nombre}`]
+      );
+    }
 
     return res.status(201).json({
       id: result.insertId,
@@ -1139,6 +1168,17 @@ exports.eliminarPlantillaDocumentoReferencia = async (req, res) => {
 
     const [result] = await pool.query('DELETE FROM plantillas_documento_referencia WHERE id = ?', [id]);
     if (!result.affectedRows) return res.status(404).json({ message: 'Plantilla no encontrada' });
+    if (req.user && req.user.id) {
+      const fecha = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(new Date());
+      await pool.query(
+        'INSERT INTO logs_acciones (usuario_id, accion, modulo, fecha, descripcion) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, 'ELIMINAR_PLANTILLA', 'REFERENCIA', fecha, `Eliminar plantilla de referencia: ${id}`]
+      );
+    }
     return res.json({ ok: true });
   } catch (err) {
     console.error('Error DELETE /referencia/documentos/plantillas/:id:', err);
