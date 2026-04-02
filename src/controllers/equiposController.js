@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
 function templateHasEquiposLoop(templateBuffer) {
   try {
@@ -388,6 +389,16 @@ function applyExcelDtoLoop(sheet, loopName, items) {
 }
 
 async function generateXlsxFromTemplate(templateBuffer, dto) {
+  const preserved = generateXlsxByXmlPreservingTemplate({
+    templateBuffer,
+    dto,
+    collectTagsFromText,
+    validateTags: validateEquiposTags,
+    replaceText: replaceExcelText,
+    hasLoopMarkers: templateHasEquiposLoop
+  });
+  if (preserved) return preserved;
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 
@@ -1879,4 +1890,3 @@ exports.eliminarPdf = async (req, res) => {
     res.status(500).json({ message: 'Error eliminando PDF', error: error.message });
   }
 };
-

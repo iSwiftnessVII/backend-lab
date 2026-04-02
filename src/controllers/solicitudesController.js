@@ -4,6 +4,7 @@ try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
 function detectSolicitudesLoopEntity(templateBuffer) {
   try {
@@ -36,6 +37,46 @@ function detectSolicitudesLoopEntity(templateBuffer) {
     // ignore; treat as no-loop
   }
   return null;
+}
+
+function detectSolicitudesTemplateDataScopes(templateBuffer) {
+  const loopEntity = detectSolicitudesLoopEntity(templateBuffer);
+  let hasSolicitudFields = false;
+  let hasClienteFields = false;
+
+  try {
+    const zip = new PizZip(templateBuffer);
+    const reSolicitudField = /{{\s*solicitud\./i;
+    const reClienteField = /{{\s*cliente\./i;
+
+    for (const name of Object.keys(zip.files || {})) {
+      const entry = zip.files[name];
+      if (!entry || entry.dir) continue;
+
+      let text = '';
+      try {
+        text = zip.file(name)?.asText() || '';
+      } catch {
+        text = '';
+      }
+      if (!text) continue;
+
+      if (!hasSolicitudFields && reSolicitudField.test(text)) hasSolicitudFields = true;
+      if (!hasClienteFields && reClienteField.test(text)) hasClienteFields = true;
+      if (hasSolicitudFields && hasClienteFields) break;
+    }
+  } catch {
+    // ignore parse issues and fallback to loop-based detection
+  }
+
+  const hasSolicitudesData = loopEntity === 'solicitud' || loopEntity === 'ambos' || hasSolicitudFields;
+  const hasClientesData = loopEntity === 'cliente' || loopEntity === 'ambos' || hasClienteFields;
+
+  return {
+    loopEntity,
+    hasSolicitudesData,
+    hasClientesData
+  };
 }
 
 async function sendMail(to, subject, text, html) {
@@ -288,9 +329,26 @@ async function getSolicitudPreviewCode(tipo, fechaSolicitud, id) {
   const year = fecha.getFullYear();
   const sid = Number(id);
   if (!Number.isFinite(sid) || sid <= 0) {
-    return `${tipoVal}-${year}-00`;
+    return `${tipoVal}-${year}-01`;
   }
-  return `${tipoVal}-${year}-${String(sid).padStart(2, '0')}`;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS seq
+         FROM Solicitudes
+        WHERE UPPER(TRIM(tipo_solicitud)) = UPPER(TRIM(?))
+          AND YEAR(COALESCE(fecha_solicitud, CURDATE())) = ?
+          AND solicitud_id <= ?`,
+      [tipoVal, year, sid]
+    );
+
+    const seq = Number(rows?.[0]?.seq || 0);
+    const safeSeq = seq > 0 ? seq : 1;
+    return `${tipoVal}-${year}-${String(safeSeq).padStart(2, '0')}`;
+  } catch (err) {
+    console.warn('No se pudo calcular consecutivo por tipo/año de solicitud:', err?.message || err);
+    return `${tipoVal}-${year}-${String(sid).padStart(2, '0')}`;
+  }
 }
 
 function safeFileComponent(value) {
@@ -501,7 +559,10 @@ async function fetchSolicitudesLoopDTO({ limit } = {}) {
       SELECT
         s.solicitud_id,
         s.id_cliente,
+        s.id_estado,
+        s.id_admin,
         s.tipo_solicitud,
+        s.id_tipo_af,
         s.nombre_muestra,
         s.fecha_solicitud,
         s.lote_producto,
@@ -523,11 +584,14 @@ async function fetchSolicitudesLoopDTO({ limit } = {}) {
     [lim]
   );
 
-  return (rows || []).map((row) => {
+  return Promise.all((rows || []).map(async (row) => {
     const solicitud = Object.create(null);
-    solicitud.solicitud_id = valueToText(row.solicitud_id);
+    solicitud.solicitud_id = await getSolicitudPreviewCode(row.tipo_solicitud, row.fecha_solicitud, row.solicitud_id);
     solicitud.id_cliente = valueToText(row.id_cliente);
+    solicitud.id_estado = valueToText(row.id_estado);
+    solicitud.id_admin = valueToText(row.id_admin);
     solicitud.tipo_solicitud = valueToText(row.tipo_solicitud);
+    solicitud.id_tipo_af = valueToText(row.id_tipo_af);
     solicitud.nombre_muestra = valueToText(row.nombre_muestra);
     solicitud.fecha_solicitud = formatDateYMD(row.fecha_solicitud);
     solicitud.lote_producto = valueToText(row.lote_producto);
@@ -543,7 +607,7 @@ async function fetchSolicitudesLoopDTO({ limit } = {}) {
     solicitud.cargo_personal = valueToText(row.cargo_personal);
     solicitud.observaciones = valueToText(row.observaciones);
     return solicitud;
-  });
+  }));
 }
 
 async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
@@ -555,7 +619,10 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
       SELECT
         s.solicitud_id,
         s.id_cliente,
+        s.id_estado,
+        s.id_admin,
         s.tipo_solicitud,
+        s.id_tipo_af,
         s.nombre_muestra,
         s.fecha_solicitud,
         s.lote_producto,
@@ -580,9 +647,12 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
 
   const row = rows[0] || {};
   const solicitud = Object.create(null);
-  solicitud.solicitud_id = valueToText(row.solicitud_id);
+  solicitud.solicitud_id = await getSolicitudPreviewCode(row.tipo_solicitud, row.fecha_solicitud, row.solicitud_id);
   solicitud.id_cliente = valueToText(row.id_cliente);
+  solicitud.id_estado = valueToText(row.id_estado);
+  solicitud.id_admin = valueToText(row.id_admin);
   solicitud.tipo_solicitud = valueToText(row.tipo_solicitud);
+  solicitud.id_tipo_af = valueToText(row.id_tipo_af);
   solicitud.nombre_muestra = valueToText(row.nombre_muestra);
   solicitud.fecha_solicitud = formatDateYMD(row.fecha_solicitud);
   solicitud.lote_producto = valueToText(row.lote_producto);
@@ -609,22 +679,28 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
       }
     : null;
 
-  const [ofertaRows] = await pool.query(
-    `
-      SELECT
-        o.id_oferta,
-        o.id_solicitud,
-        o.genero_cotizacion,
-        o.valor_cotizacion,
-        o.fecha_envio_oferta,
-        o.realizo_seguimiento_oferta,
-        o.observacion_oferta
-      FROM oferta o
-      WHERE o.id_solicitud = ?
-      LIMIT 1
-    `,
-    [Number(idNorm)]
-  );
+  let ofertaRows = [];
+  try {
+    const [rowsOferta] = await pool.query(
+      `
+        SELECT
+          o.id_oferta,
+          o.id_solicitud,
+          o.genero_cotizacion,
+          o.valor_cotizacion,
+          o.fecha_envio_oferta,
+          o.realizo_seguimiento_oferta,
+          o.observacion_oferta
+        FROM oferta o
+        WHERE o.id_solicitud = ?
+        LIMIT 1
+      `,
+      [Number(idNorm)]
+    );
+    ofertaRows = Array.isArray(rowsOferta) ? rowsOferta : [];
+  } catch (err) {
+    ofertaRows = [];
+  }
   const ofertaRow = (ofertaRows && ofertaRows.length) ? ofertaRows[0] : null;
   const oferta = Object.create(null);
   oferta.id_oferta = valueToText(ofertaRow?.id_oferta);
@@ -635,19 +711,25 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
   oferta.realizo_seguimiento_oferta = boolToSiNo(ofertaRow?.realizo_seguimiento_oferta);
   oferta.observacion_oferta = valueToText(ofertaRow?.observacion_oferta);
 
-  const [revisionRows] = await pool.query(
-    `
-      SELECT
-        r.id_revision,
-        r.id_solicitud,
-        r.fecha_limite_entrega,
-        r.servicio_es_viable
-      FROM revision_oferta r
-      WHERE r.id_solicitud = ?
-      LIMIT 1
-    `,
-    [Number(idNorm)]
-  );
+  let revisionRows = [];
+  try {
+    const [rowsRevision] = await pool.query(
+      `
+        SELECT
+          r.id_revision,
+          r.id_solicitud,
+          r.fecha_limite_entrega,
+          r.servicio_es_viable
+        FROM revision_oferta r
+        WHERE r.id_solicitud = ?
+        LIMIT 1
+      `,
+      [Number(idNorm)]
+    );
+    revisionRows = Array.isArray(rowsRevision) ? rowsRevision : [];
+  } catch (err) {
+    revisionRows = [];
+  }
   const revisionRow = (revisionRows && revisionRows.length) ? revisionRows[0] : null;
   const revision = Object.create(null);
   revision.id_revision = valueToText(revisionRow?.id_revision);
@@ -655,22 +737,28 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
   revision.fecha_limite_entrega = formatDateYMD(revisionRow?.fecha_limite_entrega);
   revision.servicio_es_viable = boolToSiNo(revisionRow?.servicio_es_viable);
 
-  const [seguimientoRows] = await pool.query(
-    `
-      SELECT
-        e.id_encuesta,
-        e.id_solicitud,
-        e.fecha_encuesta,
-        e.comentarios,
-        e.recomendaria_servicio,
-        e.cliente_respondio,
-        e.solicito_nueva_encuesta
-      FROM seguimiento_encuesta e
-      WHERE e.id_solicitud = ?
-      LIMIT 1
-    `,
-    [Number(idNorm)]
-  );
+  let seguimientoRows = [];
+  try {
+    const [rowsSeguimiento] = await pool.query(
+      `
+        SELECT
+          e.id_encuesta,
+          e.id_solicitud,
+          e.fecha_encuesta,
+          e.comentarios,
+          e.recomendaria_servicio,
+          e.cliente_respondio,
+          e.solicito_nueva_encuesta
+        FROM seguimiento_encuesta e
+        WHERE e.id_solicitud = ?
+        LIMIT 1
+      `,
+      [Number(idNorm)]
+    );
+    seguimientoRows = Array.isArray(rowsSeguimiento) ? rowsSeguimiento : [];
+  } catch (err) {
+    seguimientoRows = [];
+  }
   const segRow = (seguimientoRows && seguimientoRows.length) ? seguimientoRows[0] : null;
   const seguimiento_encuesta = Object.create(null);
   seguimiento_encuesta.id_encuesta = valueToText(segRow?.id_encuesta);
@@ -867,6 +955,16 @@ function applyExcelLoop(sheet, loopName, items, dto) {
 }
 
 async function generateSolicitudXlsxFromTemplate(templateBuffer, data) {
+  const preserved = generateXlsxByXmlPreservingTemplate({
+    templateBuffer,
+    dto: data,
+    collectTagsFromText,
+    validateTags: validateSolicitudDocTags,
+    replaceText: replaceExcelSolicitudDocText,
+    hasLoopMarkers: detectSolicitudesLoopEntity
+  });
+  if (preserved) return preserved;
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 
@@ -3158,11 +3256,28 @@ const solicitudesController = {
     try {
       await ensurePlantillasDocumentoSolicitudesTable();
       const [rows] = await pool.query(
-        `SELECT id, nombre, nombre_archivo, mime, size_bytes, usuario_id, fecha_subida
+        `SELECT id, nombre, nombre_archivo, mime, size_bytes, usuario_id, fecha_subida, archivo
          FROM plantillas_documento_solicitudes
          ORDER BY fecha_subida DESC, id DESC`
       );
-      return res.json(rows);
+      const normalized = (Array.isArray(rows) ? rows : []).map((row) => {
+        const buffer = row?.archivo ? Buffer.from(row.archivo) : Buffer.alloc(0);
+        const scope = detectSolicitudesTemplateDataScopes(buffer);
+        return {
+          id: row.id,
+          nombre: row.nombre,
+          nombre_archivo: row.nombre_archivo,
+          mime: row.mime,
+          size_bytes: row.size_bytes,
+          usuario_id: row.usuario_id,
+          fecha_subida: row.fecha_subida,
+          loop_entity: scope.loopEntity,
+          has_solicitudes_data: scope.hasSolicitudesData,
+          has_clientes_data: scope.hasClientesData
+        };
+      });
+
+      return res.json(normalized);
     } catch (err) {
       console.error('Error GET /solicitudes/documentos/plantillas:', err);
       return res.status(500).json({ message: 'Error listando plantillas' });
@@ -3184,6 +3299,7 @@ const solicitudesController = {
       const nombre = nombreRaw ? nombreRaw : null;
       const usuarioId = req.user && req.user.id ? Number(req.user.id) : null;
       const sizeBytes = Number.isFinite(file.size) ? file.size : (file.buffer ? file.buffer.length : null);
+      const scope = detectSolicitudesTemplateDataScopes(file.buffer);
 
       const [result] = await pool.query(
         `INSERT INTO plantillas_documento_solicitudes (nombre, nombre_archivo, mime, size_bytes, archivo, usuario_id)
@@ -3216,7 +3332,10 @@ const solicitudesController = {
         mime: file.mimetype || null,
         size_bytes: sizeBytes,
         usuario_id: usuarioId,
-        fecha_subida: new Date().toISOString()
+        fecha_subida: new Date().toISOString(),
+        loop_entity: scope.loopEntity,
+        has_solicitudes_data: scope.hasSolicitudesData,
+        has_clientes_data: scope.hasClientesData
       });
     } catch (err) {
       console.error('Error POST /solicitudes/documentos/plantillas:', err);
@@ -3259,6 +3378,7 @@ const solicitudesController = {
       const body = req.body || {};
       const solicitud_id = body.solicitud_id;
       const id_cliente = body.id_cliente;
+      const wantsTodos = body.todos === true || String(body.todos || '').trim().toLowerCase() === 'true' || Number(body.todos) === 1;
       const entidadRaw = String(body.entidad || '').trim().toLowerCase();
       const hasSolicitud = Number.isFinite(Number(solicitud_id)) && Number(solicitud_id) > 0;
       const hasCliente = Number.isFinite(Number(id_cliente)) && Number(id_cliente) > 0;
@@ -3280,6 +3400,11 @@ const solicitudesController = {
       // Regla A: el template manda. Si hay loop, generamos "todos" de esa entidad.
       const loopEntity = detectSolicitudesLoopEntity(Buffer.from(tpl.archivo));
       const todos = loopEntity === 'cliente' || loopEntity === 'solicitud' || loopEntity === 'ambos';
+      if (wantsTodos && !todos) {
+        return res.status(400).json({
+          message: 'La plantilla no contiene loops {{#solicitudes}} o {{#clientes}}. Use "Generar" con una solicitud o cliente.'
+        });
+      }
       if (!todos && !hasSolicitud && !hasCliente) {
         return res.status(400).json({ message: 'Debe enviar solicitud_id o id_cliente' });
       }
@@ -3349,7 +3474,9 @@ const solicitudesController = {
       return res.send(outBuffer);
     } catch (err) {
       console.error('Error POST /solicitudes/documentos/plantillas/:id/generar:', err);
-      return res.status(500).json({ message: 'Error generando documento desde plantilla' });
+      const status = err?.status ? Number(err.status) : 500;
+      const message = err?.message || 'Error generando documento desde plantilla';
+      return res.status(Number.isFinite(status) ? status : 500).json({ message });
     }
   },
 

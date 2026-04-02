@@ -4,6 +4,7 @@ try { nodemailer = require('nodemailer'); } catch (_) { nodemailer = null; }
 const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
 function templateHasReactivosLoop(templateBuffer) {
   try {
@@ -437,6 +438,16 @@ async function generateXlsxFromTemplate(templateBuffer, data) {
   const dto = data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, 'reactivo')
     ? data
     : { reactivo: data || Object.create(null) };
+  const preserved = generateXlsxByXmlPreservingTemplate({
+    templateBuffer,
+    dto,
+    collectTagsFromText,
+    validateTags,
+    replaceText: replaceExcelText,
+    hasLoopMarkers: templateHasReactivosLoop
+  });
+  if (preserved) return preserved;
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 

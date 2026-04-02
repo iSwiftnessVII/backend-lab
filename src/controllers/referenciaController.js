@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
 function templateHasReferenciaLoop(templateBuffer) {
   try {
@@ -368,6 +369,16 @@ function applyExcelDtoLoop(sheet, loopName, items) {
 }
 
 async function generateXlsxFromTemplate(templateBuffer, dto) {
+  const preserved = generateXlsxByXmlPreservingTemplate({
+    templateBuffer,
+    dto,
+    collectTagsFromText,
+    validateTags: validateReferenciaTags,
+    replaceText: replaceExcelText,
+    hasLoopMarkers: templateHasReferenciaLoop
+  });
+  if (preserved) return preserved;
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 

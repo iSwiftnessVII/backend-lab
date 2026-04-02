@@ -4,6 +4,7 @@ const path = require('path');
 const ExcelJS = require('exceljs');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
 function templateHasVolumetricosLoop(templateBuffer) {
   try {
@@ -380,6 +381,16 @@ function applyExcelDtoLoop(sheet, loopName, items) {
 }
 
 async function generateXlsxFromTemplate(templateBuffer, dto) {
+  const preserved = generateXlsxByXmlPreservingTemplate({
+    templateBuffer,
+    dto,
+    collectTagsFromText,
+    validateTags: validateVolumetricosTags,
+    replaceText: replaceExcelText,
+    hasLoopMarkers: templateHasVolumetricosLoop
+  });
+  if (preserved) return preserved;
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBuffer);
 
