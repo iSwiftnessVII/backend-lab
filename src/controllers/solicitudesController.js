@@ -243,6 +243,9 @@ const ALLOWED_SOLICITUD_FIELDS = new Set([
   'id_cliente',
   'id_estado',
   'id_admin',
+  'admin_email',
+  'admin_nombre',
+  'admin_nombre_completo',
   'tipo_solicitud',
   'id_tipo_af',
   'nombre_muestra',
@@ -646,11 +649,45 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
   if (!rows || !rows.length) return null;
 
   const row = rows[0] || {};
+
+  let assignedAdmin = null;
+  const assignedAdminId = Number(row.id_admin);
+  if (Number.isFinite(assignedAdminId) && assignedAdminId > 0) {
+    try {
+      const userCols = await getTableColumns('usuarios');
+      const userSelects = [];
+      if (userCols.has('email')) userSelects.push('u.email AS admin_email');
+      if (userCols.has('nombre')) userSelects.push('u.nombre AS admin_nombre');
+
+      if (userSelects.length) {
+        const [adminRows] = await pool.query(
+          `
+            SELECT
+              ${userSelects.join(',\n              ')}
+            FROM usuarios u
+            WHERE u.id_usuario = ?
+            LIMIT 1
+          `,
+          [assignedAdminId]
+        );
+        assignedAdmin = Array.isArray(adminRows) && adminRows.length ? adminRows[0] : null;
+      }
+    } catch (err) {
+      assignedAdmin = null;
+    }
+  }
+
+  const adminNombre = valueToText(assignedAdmin?.admin_nombre);
+  const adminNombreCompleto = adminNombre;
+
   const solicitud = Object.create(null);
   solicitud.solicitud_id = await getSolicitudPreviewCode(row.tipo_solicitud, row.fecha_solicitud, row.solicitud_id);
   solicitud.id_cliente = valueToText(row.id_cliente);
   solicitud.id_estado = valueToText(row.id_estado);
   solicitud.id_admin = valueToText(row.id_admin);
+  solicitud.admin_email = valueToText(assignedAdmin?.admin_email);
+  solicitud.admin_nombre = adminNombre;
+  solicitud.admin_nombre_completo = adminNombreCompleto;
   solicitud.tipo_solicitud = valueToText(row.tipo_solicitud);
   solicitud.id_tipo_af = valueToText(row.id_tipo_af);
   solicitud.nombre_muestra = valueToText(row.nombre_muestra);
@@ -713,20 +750,32 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
 
   let revisionRows = [];
   try {
-    const [rowsRevision] = await pool.query(
-      `
+    const revisionCols = await getTableColumns('revision_oferta');
+    const candidateCols = [
+      'id_revision',
+      'id_solicitud',
+      'fecha_limite_entrega',
+      ...Array.from(ALLOWED_REVISION_FIELDS),
+      'servicio_es_viable'
+    ];
+    const selectedCols = candidateCols
+      .filter((c, i, arr) => arr.indexOf(c) === i)
+      .filter((c) => revisionCols.has(c));
+
+    if (selectedCols.length) {
+      const selectSql = selectedCols.map((c) => `r.${c}`).join(',\n          ');
+      const [rowsRevision] = await pool.query(
+        `
         SELECT
-          r.id_revision,
-          r.id_solicitud,
-          r.fecha_limite_entrega,
-          r.servicio_es_viable
+          ${selectSql}
         FROM revision_oferta r
         WHERE r.id_solicitud = ?
         LIMIT 1
       `,
-      [Number(idNorm)]
-    );
-    revisionRows = Array.isArray(rowsRevision) ? rowsRevision : [];
+        [Number(idNorm)]
+      );
+      revisionRows = Array.isArray(rowsRevision) ? rowsRevision : [];
+    }
   } catch (err) {
     revisionRows = [];
   }
@@ -735,7 +784,28 @@ async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
   revision.id_revision = valueToText(revisionRow?.id_revision);
   revision.id_solicitud = valueToText(revisionRow?.id_solicitud ?? row.solicitud_id);
   revision.fecha_limite_entrega = formatDateYMD(revisionRow?.fecha_limite_entrega);
+  revision.tipo_muestra_especificado = valueToText(revisionRow?.tipo_muestra_especificado);
+  revision.ensayos_requeridos_claros = boolToSiNo(revisionRow?.ensayos_requeridos_claros);
+  revision.equipos_calibrados = boolToSiNo(revisionRow?.equipos_calibrados);
+  revision.personal_competente = boolToSiNo(revisionRow?.personal_competente);
+  revision.infraestructura_adecuada = boolToSiNo(revisionRow?.infraestructura_adecuada);
+  revision.insumos_vigentes = boolToSiNo(revisionRow?.insumos_vigentes);
+  revision.cumple_tiempos_entrega = boolToSiNo(revisionRow?.cumple_tiempos_entrega);
+  revision.normas_metodos_especificados = boolToSiNo(revisionRow?.normas_metodos_especificados);
+  revision.metodo_validado_verificado = boolToSiNo(revisionRow?.metodo_validado_verificado);
+  revision.metodo_adecuado = boolToSiNo(revisionRow?.metodo_adecuado);
+  revision.observaciones_tecnicas = valueToText(revisionRow?.observaciones_tecnicas);
   revision.servicio_es_viable = boolToSiNo(revisionRow?.servicio_es_viable);
+
+  const conceptoRaw = revisionRow?.concepto_final;
+  if (conceptoRaw !== null && conceptoRaw !== undefined && String(conceptoRaw).trim() !== '') {
+    revision.concepto_final = valueToText(conceptoRaw);
+  } else if (revisionRow?.servicio_es_viable !== null && revisionRow?.servicio_es_viable !== undefined) {
+    const viable = Number(revisionRow?.servicio_es_viable);
+    revision.concepto_final = viable === 1 ? 'SOLICITUD_VIABLE' : (viable === 0 ? 'SOLICITUD_NO_VIABLE' : '');
+  } else {
+    revision.concepto_final = '';
+  }
 
   let seguimientoRows = [];
   try {
