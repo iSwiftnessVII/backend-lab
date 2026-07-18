@@ -6,6 +6,89 @@ const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 const { generateXlsxByXmlPreservingTemplate } = require('./xlsxTemplatePreserve');
 
+// Cache para códigos de solicitud precalculados
+const solicitudPreviewCache = new Map();
+let lastCacheInvalidation = 0;
+const CACHE_TTL = 60000; // 1 minuto
+
+function invalidateSolicitudPreviewCache() {
+  solicitudPreviewCache.clear();
+  lastCacheInvalidation = Date.now();
+}
+
+// Función optimizada: calcular códigos en BATCH con una sola consulta SQL
+async function batchGetSolicitudPreviewCodes(solicitudes) {
+  if (!solicitudes || solicitudes.length === 0) return new Map();
+  
+  const result = new Map();
+  
+  try {
+    // Obtener todas las solicitudes ordenadas para calcular secuencias correctas
+    const [allRows] = await pool.query(`
+      SELECT 
+        solicitud_id,
+        UPPER(TRIM(tipo_solicitud)) as tipo_key,
+        tipo_solicitud,
+        YEAR(COALESCE(fecha_solicitud, CURDATE())) as year,
+        fecha_solicitud
+      FROM Solicitudes
+      ORDER BY tipo_solicitud, YEAR(COALESCE(fecha_solicitud, CURDATE())), solicitud_id ASC
+    `);
+    
+    // Calcular secuencia por (tipo, año)
+    const counters = new Map();
+    for (const row of allRows) {
+      const key = `${row.tipo_key}|${row.year}`;
+      const currentCount = (counters.get(key) || 0) + 1;
+      counters.set(key, currentCount);
+      
+      const code = `${row.tipo_solicitud}-${row.year}-${String(currentCount).padStart(2, '0')}`;
+      result.set(row.solicitud_id, code);
+    }
+    
+    return result;
+  } catch (err) {
+    console.warn('Error en batchGetSolicitudPreviewCodes:', err);
+    // Fallback: calcular individualmente para cada solicitud
+    for (const s of solicitudes) {
+      const code = await getSolicitudPreviewCode(s.tipo_solicitud, s.fecha_solicitud, s.solicitud_id);
+      result.set(s.solicitud_id, code);
+    }
+    return result;
+  }
+}
+
+// Función original (mantener para uso individual)
+async function getSolicitudPreviewCode(tipo, fechaSolicitud, id) {
+  const tipoVal = String(tipo || '').trim();
+  if (!tipoVal) return 'N/A';
+  let fecha = fechaSolicitud ? new Date(fechaSolicitud) : new Date();
+  if (isNaN(fecha.getTime())) fecha = new Date();
+  const year = fecha.getFullYear();
+  const sid = Number(id);
+  if (!Number.isFinite(sid) || sid <= 0) {
+    return `${tipoVal}-${year}-01`;
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS seq
+         FROM Solicitudes
+        WHERE UPPER(TRIM(tipo_solicitud)) = UPPER(TRIM(?))
+          AND YEAR(COALESCE(fecha_solicitud, CURDATE())) = ?
+          AND solicitud_id <= ?`,
+      [tipoVal, year, sid]
+    );
+
+    const seq = Number(rows?.[0]?.seq || 0);
+    const safeSeq = seq > 0 ? seq : 1;
+    return `${tipoVal}-${year}-${String(safeSeq).padStart(2, '0')}`;
+  } catch (err) {
+    console.warn('No se pudo calcular consecutivo por tipo/año de solicitud:', err?.message || err);
+    return `${tipoVal}-${year}-${String(sid).padStart(2, '0')}`;
+  }
+}
+
 function detectSolicitudesLoopEntity(templateBuffer) {
   try {
     const zip = new PizZip(templateBuffer);
@@ -208,6 +291,14 @@ async function getTableColumns(tableName) {
   }
 }
 
+function invalidateTableColumnsCache(tableName) {
+  if (tableName) {
+    tableColumnsCache.delete(tableName);
+  } else {
+    tableColumnsCache.clear();
+  }
+}
+
 const ALLOWED_CLIENTE_FIELDS = new Set([
   'id_cliente',
   'numero',
@@ -322,36 +413,6 @@ function formatDateTime(value) {
     if (!isNaN(d.getTime())) return d.toISOString().slice(0, 19).replace('T', ' ');
   } catch {}
   return '';
-}
-
-async function getSolicitudPreviewCode(tipo, fechaSolicitud, id) {
-  const tipoVal = String(tipo || '').trim();
-  if (!tipoVal) return 'N/A';
-  let fecha = fechaSolicitud ? new Date(fechaSolicitud) : new Date();
-  if (isNaN(fecha.getTime())) fecha = new Date();
-  const year = fecha.getFullYear();
-  const sid = Number(id);
-  if (!Number.isFinite(sid) || sid <= 0) {
-    return `${tipoVal}-${year}-01`;
-  }
-
-  try {
-    const [rows] = await pool.query(
-      `SELECT COUNT(*) AS seq
-         FROM Solicitudes
-        WHERE UPPER(TRIM(tipo_solicitud)) = UPPER(TRIM(?))
-          AND YEAR(COALESCE(fecha_solicitud, CURDATE())) = ?
-          AND solicitud_id <= ?`,
-      [tipoVal, year, sid]
-    );
-
-    const seq = Number(rows?.[0]?.seq || 0);
-    const safeSeq = seq > 0 ? seq : 1;
-    return `${tipoVal}-${year}-${String(safeSeq).padStart(2, '0')}`;
-  } catch (err) {
-    console.warn('No se pudo calcular consecutivo por tipo/año de solicitud:', err?.message || err);
-    return `${tipoVal}-${year}-${String(sid).padStart(2, '0')}`;
-  }
 }
 
 function safeFileComponent(value) {
@@ -555,6 +616,7 @@ async function fetchClientesLoopDTO({ limit } = {}) {
   });
 }
 
+// Versión optimizada de fetchSolicitudesLoopDTO
 async function fetchSolicitudesLoopDTO({ limit } = {}) {
   const lim = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(20000, Number(limit)) : 5000;
   const [rows] = await pool.query(
@@ -587,9 +649,13 @@ async function fetchSolicitudesLoopDTO({ limit } = {}) {
     [lim]
   );
 
-  return Promise.all((rows || []).map(async (row) => {
+  // Calcular códigos en BATCH para todas las solicitudes
+  const previewCodes = await batchGetSolicitudPreviewCodes(rows);
+
+  return (rows || []).map((row) => {
     const solicitud = Object.create(null);
-    solicitud.solicitud_id = await getSolicitudPreviewCode(row.tipo_solicitud, row.fecha_solicitud, row.solicitud_id);
+    solicitud.solicitud_id = previewCodes.get(row.solicitud_id) || 
+      `${row.tipo_solicitud}-${new Date(row.fecha_solicitud || Date.now()).getFullYear()}-${String(row.solicitud_id).padStart(2, '0')}`;
     solicitud.id_cliente = valueToText(row.id_cliente);
     solicitud.id_estado = valueToText(row.id_estado);
     solicitud.id_admin = valueToText(row.id_admin);
@@ -610,7 +676,7 @@ async function fetchSolicitudesLoopDTO({ limit } = {}) {
     solicitud.cargo_personal = valueToText(row.cargo_personal);
     solicitud.observaciones = valueToText(row.observaciones);
     return solicitud;
-  }));
+  });
 }
 
 async function fetchSolicitudDocumentoDTO({ solicitud_id }) {
@@ -1187,6 +1253,41 @@ function getExtLower(filename) {
   return idx >= 0 ? name.slice(idx) : '';
 }
 
+// Función auxiliar para generar código de cliente
+async function generateClienteXlsxFromTemplate(templateBuffer, clienteDoc) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(templateBuffer);
+  
+  workbook.eachSheet((sheet) => {
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        if (typeof cell.value === 'string') {
+          let val = cell.value;
+          for (const [key, value] of Object.entries(clienteDoc)) {
+            val = val.replace(new RegExp(`{{cliente\\.${key}}}`, 'g'), valueToText(value));
+          }
+          cell.value = val;
+        }
+      });
+    });
+  });
+  
+  return await workbook.xlsx.writeBuffer();
+}
+
+async function generateClienteDocxFromTemplate(templateBuffer, clienteDoc) {
+  const zip = new PizZip(templateBuffer);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    nullGetter: () => ''
+  });
+  
+  doc.setData({ cliente: clienteDoc });
+  doc.render();
+  return doc.getZip().generate({ type: 'nodebuffer' });
+}
+
 const solicitudesController = {
   // ---------- DEPARTAMENTOS Y CIUDADES ----------
   getDepartamentos: async (req, res) => {
@@ -1202,8 +1303,6 @@ const solicitudesController = {
   getCiudades: async (req, res) => {
     const codigoDepartamento = String(req.query.departamento || '').trim();
 
-    // Some DBs use different column names for the departamento code in `ciudades`.
-    // Detect once per process to avoid 500s caused by schema mismatch.
     if (!global.__ciudadesDeptColumn) {
       try {
         const [cols] = await pool.query('SHOW COLUMNS FROM ciudades');
@@ -1218,7 +1317,6 @@ const solicitudesController = {
         ];
         global.__ciudadesDeptColumn = candidates.find((c) => fields.has(c)) || null;
       } catch (e) {
-        // If table doesn't exist or SHOW fails, leave null and let query below error.
         global.__ciudadesDeptColumn = null;
       }
     }
@@ -1368,6 +1466,9 @@ const solicitudesController = {
          ORDER BY s.solicitud_id DESC`
       );
 
+      // Pre-calcular códigos para todas las solicitudes
+      const previewCodes = await batchGetSolicitudPreviewCodes(rows);
+
       const workbook = new ExcelJS.Workbook();
       workbook.created = new Date();
       workbook.modified = new Date();
@@ -1389,11 +1490,8 @@ const solicitudesController = {
       ];
 
       for (const row of rows || []) {
-        const numeroSolicitudPreview = await getSolicitudPreviewCode(
-          row?.tipo_solicitud,
-          row?.fecha_solicitud,
-          row?.solicitud_id
-        );
+        const numeroSolicitudPreview = previewCodes.get(row.solicitud_id) ||
+          `${row.tipo_solicitud}-${new Date(row.fecha_solicitud || Date.now()).getFullYear()}-${String(row.solicitud_id).padStart(2, '0')}`;
         worksheet.addRow({
           tipo_solicitud: row?.tipo_solicitud ?? '',
           nombre_solicitante: row?.nombre_solicitante ?? '',
@@ -1503,6 +1601,9 @@ const solicitudesController = {
         );
       }
 
+      // Invalidar caché de códigos de solicitud
+      invalidateSolicitudPreviewCache();
+
       res.status(201).json({ id_cliente: result.insertId });
     } catch (err) {
       console.error('POST /clientes error', err);
@@ -1526,7 +1627,6 @@ const solicitudesController = {
     const id = req.params.id;
     const body = req.body || {};
     try {
-      // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM clientes WHERE id_cliente = ?', [id]);
       if (!rowsCurrent.length) return res.status(404).json({ message: 'Cliente no encontrado' });
       const datosActuales = rowsCurrent[0];
@@ -1544,6 +1644,9 @@ const solicitudesController = {
       values.push(id);
       await pool.query(`UPDATE clientes SET ${fields.join(', ')} WHERE id_cliente = ?`, values);
 
+      // Invalidar caché de códigos de solicitud
+      invalidateSolicitudPreviewCache();
+
       if (req.user && req.user.id) {
         const cambios = {};
         const normalize = (val) => {
@@ -1554,7 +1657,6 @@ const solicitudesController = {
 
         for (const key in datosNuevos) {
           if (Object.prototype.hasOwnProperty.call(datosNuevos, key)) {
-            // Comparar solo si la clave existe en datosActuales (para evitar undefined en columnas que no están en select * si pasara algo raro, pero aquí es seguro)
             const valAnt = normalize(datosActuales[key]);
             const valNuevo = normalize(datosNuevos[key]);
             if (valAnt !== valNuevo) {
@@ -1602,6 +1704,9 @@ const solicitudesController = {
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: 'Cliente no encontrado' });
       }
+
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
 
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -1653,7 +1758,17 @@ const solicitudesController = {
          LIMIT 500`,
         params
       );
-      res.json(rows);
+      
+      // Calcular códigos en BATCH para todas las solicitudes
+      const previewCodes = await batchGetSolicitudPreviewCodes(rows);
+      
+      const results = rows.map(row => ({
+        ...row,
+        numero_solicitud_front: previewCodes.get(row.solicitud_id) || 
+          `${row.tipo_solicitud}-${new Date(row.fecha_solicitud || Date.now()).getFullYear()}-${String(row.solicitud_id).padStart(2, '0')}`
+      }));
+      
+      res.json(results);
     } catch (err) {
       console.error('GET /solicitudes error', err);
       res.status(500).json({ message: 'Internal server error' });
@@ -1735,6 +1850,9 @@ const solicitudesController = {
         params
       );
 
+      // Calcular códigos en BATCH
+      const previewCodes = await batchGetSolicitudPreviewCodes(rows);
+
       const normalizeBinaryValue = (value) => {
         if (value === null || value === undefined) return '';
         if (typeof value === 'boolean') return value ? 'si' : 'no';
@@ -1749,61 +1867,52 @@ const solicitudesController = {
         return value;
       };
 
-      const preparedRows = await Promise.all(
-        (rows || []).map(async (row) => {
-          const codigoSolicitud = await getSolicitudPreviewCode(
-            row?.tipo_solicitud,
-            row?.fecha_solicitud,
-            row?.solicitud_id
-          );
-          return {
-            codigo_solicitud: codigoSolicitud ?? '',
-            nombre_cliente: row?.nombre_solicitante ?? '',
-            tipo_solicitud: row?.tipo_solicitud ?? '',
-            nombre_muestra: row?.nombre_muestra ?? '',
-            fecha_solicitud: row?.fecha_solicitud ?? '',
-            lote_producto: row?.lote_producto ?? '',
-            fecha_vencimiento_muestra: row?.fecha_vencimiento_muestra ?? '',
-            tipo_muestra: row?.tipo_muestra ?? '',
-            tipo_empaque: row?.tipo_empaque ?? '',
-            analisis_requerido: row?.analisis_requerido ?? '',
-            req_analisis: normalizeBinaryValue(row?.req_analisis),
-            cant_muestras: row?.cant_muestras ?? '',
-            solicitud_recibida: normalizeBinaryValue(row?.solicitud_recibida),
-            fecha_entrega_muestra: row?.fecha_entrega_muestra ?? '',
-            recibe_personal: row?.recibe_personal ?? '',
-            cargo_personal: row?.cargo_personal ?? '',
-            observaciones: row?.observaciones ?? '',
-            correo_electronico: row?.correo_electronico ?? '',
-            estado: row?.nombre_estado ?? '',
-            admin_email: row?.admin_email ?? '',
-            genero_cotizacion: row?.genero_cotizacion ?? '',
-            valor_cotizacion: row?.valor_cotizacion ?? '',
-            fecha_envio_oferta: row?.fecha_envio_oferta ?? '',
-            realizo_seguimiento_oferta: normalizeBinaryValue(row?.realizo_seguimiento_oferta),
-            observacion_oferta: row?.observacion_oferta ?? '',
-            fecha_limite_entrega: row?.fecha_limite_entrega ?? '',
-            tipo_muestra_especificado: row?.tipo_muestra_especificado ?? '',
-            ensayos_requeridos_claros: normalizeBinaryValue(row?.ensayos_requeridos_claros),
-            equipos_calibrados: normalizeBinaryValue(row?.equipos_calibrados),
-            personal_competente: normalizeBinaryValue(row?.personal_competente),
-            infraestructura_adecuada: normalizeBinaryValue(row?.infraestructura_adecuada),
-            insumos_vigentes: normalizeBinaryValue(row?.insumos_vigentes),
-            cumple_tiempos_entrega: normalizeBinaryValue(row?.cumple_tiempos_entrega),
-            normas_metodos_especificados: normalizeBinaryValue(row?.normas_metodos_especificados),
-            metodo_validado_verificado: normalizeBinaryValue(row?.metodo_validado_verificado),
-            metodo_adecuado: normalizeBinaryValue(row?.metodo_adecuado),
-            observaciones_tecnicas: row?.observaciones_tecnicas ?? '',
-            concepto_final: row?.concepto_final ?? '',
-            fecha_encuesta: row?.fecha_encuesta ?? '',
-            fecha_realizacion_encuesta: row?.fecha_realizacion_encuesta ?? '',
-            comentarios: row?.comentarios ?? '',
-            recomendaria_servicio: normalizeBinaryValue(row?.recomendaria_servicio),
-            cliente_respondio: normalizeBinaryValue(row?.cliente_respondio),
-            solicito_nueva_encuesta: normalizeBinaryValue(row?.solicito_nueva_encuesta)
-          };
-        })
-      );
+      const preparedRows = (rows || []).map((row) => ({
+        codigo_solicitud: previewCodes.get(row.solicitud_id) || '',
+        nombre_cliente: row?.nombre_solicitante ?? '',
+        tipo_solicitud: row?.tipo_solicitud ?? '',
+        nombre_muestra: row?.nombre_muestra ?? '',
+        fecha_solicitud: row?.fecha_solicitud ?? '',
+        lote_producto: row?.lote_producto ?? '',
+        fecha_vencimiento_muestra: row?.fecha_vencimiento_muestra ?? '',
+        tipo_muestra: row?.tipo_muestra ?? '',
+        tipo_empaque: row?.tipo_empaque ?? '',
+        analisis_requerido: row?.analisis_requerido ?? '',
+        req_analisis: normalizeBinaryValue(row?.req_analisis),
+        cant_muestras: row?.cant_muestras ?? '',
+        solicitud_recibida: normalizeBinaryValue(row?.solicitud_recibida),
+        fecha_entrega_muestra: row?.fecha_entrega_muestra ?? '',
+        recibe_personal: row?.recibe_personal ?? '',
+        cargo_personal: row?.cargo_personal ?? '',
+        observaciones: row?.observaciones ?? '',
+        correo_electronico: row?.correo_electronico ?? '',
+        estado: row?.nombre_estado ?? '',
+        admin_email: row?.admin_email ?? '',
+        genero_cotizacion: row?.genero_cotizacion ?? '',
+        valor_cotizacion: row?.valor_cotizacion ?? '',
+        fecha_envio_oferta: row?.fecha_envio_oferta ?? '',
+        realizo_seguimiento_oferta: normalizeBinaryValue(row?.realizo_seguimiento_oferta),
+        observacion_oferta: row?.observacion_oferta ?? '',
+        fecha_limite_entrega: row?.fecha_limite_entrega ?? '',
+        tipo_muestra_especificado: row?.tipo_muestra_especificado ?? '',
+        ensayos_requeridos_claros: normalizeBinaryValue(row?.ensayos_requeridos_claros),
+        equipos_calibrados: normalizeBinaryValue(row?.equipos_calibrados),
+        personal_competente: normalizeBinaryValue(row?.personal_competente),
+        infraestructura_adecuada: normalizeBinaryValue(row?.infraestructura_adecuada),
+        insumos_vigentes: normalizeBinaryValue(row?.insumos_vigentes),
+        cumple_tiempos_entrega: normalizeBinaryValue(row?.cumple_tiempos_entrega),
+        normas_metodos_especificados: normalizeBinaryValue(row?.normas_metodos_especificados),
+        metodo_validado_verificado: normalizeBinaryValue(row?.metodo_validado_verificado),
+        metodo_adecuado: normalizeBinaryValue(row?.metodo_adecuado),
+        observaciones_tecnicas: row?.observaciones_tecnicas ?? '',
+        concepto_final: row?.concepto_final ?? '',
+        fecha_encuesta: row?.fecha_encuesta ?? '',
+        fecha_realizacion_encuesta: row?.fecha_realizacion_encuesta ?? '',
+        comentarios: row?.comentarios ?? '',
+        recomendaria_servicio: normalizeBinaryValue(row?.recomendaria_servicio),
+        cliente_respondio: normalizeBinaryValue(row?.cliente_respondio),
+        solicito_nueva_encuesta: normalizeBinaryValue(row?.solicito_nueva_encuesta)
+      }));
 
       const orderedColumns = [
         { key: 'codigo_solicitud', header: 'Codigo solicitud', width: 20 },
@@ -1976,17 +2085,16 @@ const solicitudesController = {
          LIMIT 500`,
         params
       );
+      
+      // Calcular códigos en BATCH
+      const previewCodes = await batchGetSolicitudPreviewCodes(rows);
+      
       const list = rows || [];
-      const withCodes = await Promise.all(
-        list.map(async (row) => {
-          const numero_solicitud_front = await getSolicitudPreviewCode(
-            row?.tipo_solicitud,
-            row?.fecha_solicitud,
-            row?.solicitud_id
-          );
-          return { ...row, numero_solicitud_front };
-        })
-      );
+      const withCodes = list.map((row) => ({
+        ...row,
+        numero_solicitud_front: previewCodes.get(row.solicitud_id) ||
+          `${row.tipo_solicitud}-${new Date(row.fecha_solicitud || Date.now()).getFullYear()}-${String(row.solicitud_id).padStart(2, '0')}`
+      }));
       res.json(withCodes);
     } catch (err) {
       console.error('GET /solicitudes/detalle/lista error', err);
@@ -2071,12 +2179,12 @@ const solicitudesController = {
       );
       if (!rows || rows.length === 0) return res.status(404).json({ message: 'Solicitud no encontrada' });
       const row = rows[0];
-      const numero_solicitud_front = await getSolicitudPreviewCode(
+      const previewCode = await getSolicitudPreviewCode(
         row?.tipo_solicitud,
         row?.fecha_solicitud,
         row?.solicitud_id
       );
-      res.json({ ...row, numero_solicitud_front });
+      res.json({ ...row, numero_solicitud_front: previewCode });
     } catch (err) {
       console.error('GET /solicitudes/detalle/:id error', err);
       res.status(500).json({ message: 'Error obteniendo detalle de solicitud' });
@@ -2154,6 +2262,9 @@ const solicitudesController = {
 
       const [result] = await pool.query(sql, params);
 
+      // Invalidar caché de códigos
+      invalidateSolicitudPreviewCache();
+
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
           timeZone: 'America/Bogota',
@@ -2199,14 +2310,14 @@ const solicitudesController = {
             const id = b.solicitud_id || result.insertId;
             const tipo = b.tipo_solicitud || 'N/A';
             const nombre = b.nombre_muestra || 'N/A';
-          const previewCode = await getSolicitudPreviewCode(tipo, b.fecha_solicitud, id);
-          const subject = `Solicitud asignada: ${previewCode}`;
-          const text = `Se te asignó la solicitud ${previewCode}`;
-          const html = `<h3>Solicitud asignada</h3><p><strong>Código:</strong> ${previewCode}</p><p><strong>Muestra:</strong> ${nombre}</p>`;
-          setImmediate(() => {
-            sendMail(adminEmail, subject, text, html)
-              .catch((err) => console.warn('Error notificando asignación de solicitud:', err));
-          });
+            const previewCode = await getSolicitudPreviewCode(tipo, b.fecha_solicitud, id);
+            const subject = `Solicitud asignada: ${previewCode}`;
+            const text = `Se te asignó la solicitud ${previewCode}`;
+            const html = `<h3>Solicitud asignada</h3><p><strong>Código:</strong> ${previewCode}</p><p><strong>Muestra:</strong> ${nombre}</p>`;
+            setImmediate(() => {
+              sendMail(adminEmail, subject, text, html)
+                .catch((err) => console.warn('Error notificando asignación de solicitud:', err));
+            });
           }
         } catch (assignErr) {
           console.warn('Error notificando asignación de solicitud:', assignErr);
@@ -2253,7 +2364,6 @@ const solicitudesController = {
       if (req.user && req.user.rol === 'Administrador') {
         return res.status(403).json({ message: 'No tienes permisos para editar solicitudes.' });
       }
-      // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM Solicitudes WHERE solicitud_id = ?', [id]);
       if (!rowsCurrent.length) return res.status(404).json({ message: 'Solicitud no encontrada' });
       const datosActuales = rowsCurrent[0];
@@ -2270,6 +2380,9 @@ const solicitudesController = {
       if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
       values.push(id);
       await pool.query(`UPDATE Solicitudes SET ${fields.join(', ')} WHERE solicitud_id = ?`, values);
+
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
 
       if (req.user && req.user.id) {
         const cambios = {};
@@ -2340,6 +2453,9 @@ const solicitudesController = {
 
       await pool.query('UPDATE Solicitudes SET id_estado = ? WHERE solicitud_id = ?', [id_estado, id]);
 
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
+
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
           timeZone: 'America/Bogota',
@@ -2375,6 +2491,9 @@ const solicitudesController = {
 
     try {
       await pool.query('UPDATE Solicitudes SET id_admin = ? WHERE solicitud_id = ?', [id_admin, id]);
+
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
 
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -2436,7 +2555,6 @@ const solicitudesController = {
     const b = req.body || {};
     
     try {
-      // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM oferta WHERE id_solicitud = ?', [id_solicitud]);
       const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
 
@@ -2469,6 +2587,9 @@ const solicitudesController = {
           ]
         );
       }
+
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
 
       if (req.user && req.user.id) {
         const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -2613,6 +2734,9 @@ const solicitudesController = {
         }
       }
 
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
+
       if (req.user && req.user.id) {
          const fecha = new Intl.DateTimeFormat('sv-SE', {
            timeZone: 'America/Bogota',
@@ -2671,6 +2795,7 @@ const solicitudesController = {
         const evaluadaId = await getEstadoIdByName('EVALUADA');
         if (evaluadaId) {
           await pool.query('UPDATE Solicitudes SET id_estado = ? WHERE solicitud_id = ?', [evaluadaId, id_solicitud]);
+          invalidateSolicitudPreviewCache();
         }
       } catch (estadoErr) {
         console.warn('Error actualizando estado a EVALUADA:', estadoErr);
@@ -2740,13 +2865,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesSolicitudesTable();
       const [existing] = await pool.query(
         'SELECT activo FROM suscripciones_solicitudes WHERE email = ? LIMIT 1',
         [email]
@@ -2776,13 +2895,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesSolicitudesTable();
       const [rows] = await pool.query('SELECT activo FROM suscripciones_solicitudes WHERE email = ?', [email]);
       if (!rows.length) return res.json({ suscrito: false });
       return res.json({ suscrito: !!rows[0].activo });
@@ -2799,13 +2912,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_solicitudes (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesSolicitudesTable();
       const [result] = await pool.query('UPDATE suscripciones_solicitudes SET activo = 0 WHERE email = ?', [email]);
       return res.json({ ok: true, updated: result.affectedRows });
     } catch (err) {
@@ -2821,13 +2928,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesRevisionTable();
       const [existing] = await pool.query(
         'SELECT activo FROM suscripciones_revision_oferta WHERE email = ? LIMIT 1',
         [email]
@@ -2857,13 +2958,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesRevisionTable();
       const [rows] = await pool.query('SELECT activo FROM suscripciones_revision_oferta WHERE email = ?', [email]);
       if (!rows.length) return res.json({ suscrito: false });
       return res.json({ suscrito: !!rows[0].activo });
@@ -2880,13 +2975,7 @@ const solicitudesController = {
       if (!email || !re.test(email)) {
         return res.status(400).json({ error: 'Email inválido' });
       }
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS suscripciones_revision_oferta (
-          email VARCHAR(255) PRIMARY KEY,
-          activo TINYINT(1) NOT NULL DEFAULT 1,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+      await ensureSuscripcionesRevisionTable();
       const [result] = await pool.query('UPDATE suscripciones_revision_oferta SET activo = 0 WHERE email = ?', [email]);
       return res.json({ ok: true, updated: result.affectedRows });
     } catch (err) {
@@ -2913,7 +3002,6 @@ const solicitudesController = {
       const clienteRespondio = toTinyIntOrNull(b.cliente_respondio);
       const solicitoNuevaEncuesta = toTinyIntOrNull(b.solicito_nueva_encuesta);
 
-      // Obtener datos actuales
       const [rowsCurrent] = await pool.query('SELECT * FROM seguimiento_encuesta WHERE id_solicitud = ?', [id_solicitud]);
       const datosActuales = rowsCurrent.length ? rowsCurrent[0] : null;
 
@@ -2948,6 +3036,9 @@ const solicitudesController = {
           ]
         );
       }
+      
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
       
       if (req.user && req.user.id) {
          const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -3016,6 +3107,9 @@ const solicitudesController = {
         return res.status(404).json({ message: 'Solicitud no encontrada' });
       }
 
+      // Invalidar caché
+      invalidateSolicitudPreviewCache();
+
       if (req.user && req.user.id) {
          const fecha = new Intl.DateTimeFormat('sv-SE', {
            timeZone: 'America/Bogota',
@@ -3059,7 +3153,6 @@ const solicitudesController = {
       await connection.beginTransaction();
 
       try {
-        // Fetch current data for diffs
         const [rowsCurrent] = await connection.query(
             'SELECT cliente_respondio_encuesta, solicito_nueva_encuesta FROM Solicitudes WHERE id_solicitud = ?',
             [body.id_solicitud]
@@ -3100,6 +3193,9 @@ const solicitudesController = {
             updateValues
           );
         }
+
+        // Invalidar caché
+        invalidateSolicitudPreviewCache();
 
         if (req.user && req.user.id) {
            const fecha = new Intl.DateTimeFormat('sv-SE', {
@@ -3260,6 +3356,7 @@ const solicitudesController = {
       return res.status(Number.isFinite(status) ? status : 500).json({ message });
     }
   },
+  
   generarDocumentoClienteConLlavesSolicitud: async (req, res) => {
     try {
       const file = req.file;
@@ -3322,6 +3419,7 @@ const solicitudesController = {
       return res.status(Number.isFinite(status) ? status : 500).json({ message });
     }
   },
+  
   listarPlantillasDocumentoSolicitud: async (req, res) => {
     try {
       await ensurePlantillasDocumentoSolicitudesTable();
@@ -3467,7 +3565,6 @@ const solicitudesController = {
         return res.status(400).json({ message: 'Formato de plantilla no soportado. Use .xlsx o .docx' });
       }
 
-      // Regla A: el template manda. Si hay loop, generamos "todos" de esa entidad.
       const loopEntity = detectSolicitudesLoopEntity(Buffer.from(tpl.archivo));
       const todos = loopEntity === 'cliente' || loopEntity === 'solicitud' || loopEntity === 'ambos';
       if (wantsTodos && !todos) {
@@ -3550,134 +3647,6 @@ const solicitudesController = {
     }
   },
 
-  // Suscripciones para nuevas solicitudes
-  suscribirseSolicitudes: async (req, res) => {
-    try {
-      const email = String((req.body || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesSolicitudesTable();
-      const [existing] = await pool.query(
-        'SELECT activo FROM suscripciones_solicitudes WHERE email = ? LIMIT 1',
-        [email]
-      );
-      if (existing && existing.length && existing[0] && existing[0].activo) {
-        return res.status(409).json({ error: 'Este correo ya está suscrito a solicitudes' });
-      }
-      await pool.query(
-        `INSERT INTO suscripciones_solicitudes (email, activo) VALUES (?, 1)
-         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
-        [email]
-      );
-      const text = 'Te has suscrito a notificaciones de nuevas solicitudes.';
-      const html = '<p>Te has suscrito a notificaciones de <strong>nuevas solicitudes</strong>.</p>';
-      const r = await sendMail(email, 'Suscripción a nuevas solicitudes confirmada', text, html);
-      return res.json({ ok: true, ...r });
-    } catch (err) {
-      console.error('Error suscribirseSolicitudes:', err);
-      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
-    }
-  },
-
-  obtenerEstadoSuscripcionSolicitudes: async (req, res) => {
-    try {
-      const email = String((req.params || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesSolicitudesTable();
-      const [rows] = await pool.query('SELECT activo FROM suscripciones_solicitudes WHERE email = ?', [email]);
-      if (!rows.length) return res.json({ suscrito: false });
-      return res.json({ suscrito: !!rows[0].activo });
-    } catch (err) {
-      console.error('Error obtenerEstadoSuscripcionSolicitudes:', err);
-      return res.status(500).json({ error: 'Error consultando suscripción' });
-    }
-  },
-
-  cancelarSuscripcionSolicitudes: async (req, res) => {
-    try {
-      const email = String((req.params || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesSolicitudesTable();
-      const [result] = await pool.query('UPDATE suscripciones_solicitudes SET activo = 0 WHERE email = ?', [email]);
-      return res.json({ ok: true, updated: result.affectedRows });
-    } catch (err) {
-      console.error('Error cancelarSuscripcionSolicitudes:', err);
-      return res.status(500).json({ error: 'Error cancelando suscripción' });
-    }
-  },
-
-  // Suscripciones para revisión de oferta
-  suscribirseRevisionOferta: async (req, res) => {
-    try {
-      const email = String((req.body || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesRevisionTable();
-      const [existing] = await pool.query(
-        'SELECT activo FROM suscripciones_revision_oferta WHERE email = ? LIMIT 1',
-        [email]
-      );
-      if (existing && existing.length && existing[0] && existing[0].activo) {
-        return res.status(409).json({ error: 'Este correo ya está suscrito a revisión de oferta' });
-      }
-      await pool.query(
-        `INSERT INTO suscripciones_revision_oferta (email, activo) VALUES (?, 1)
-         ON DUPLICATE KEY UPDATE activo = VALUES(activo), created_at = CURRENT_TIMESTAMP`,
-        [email]
-      );
-      const text = 'Te has suscrito a notificaciones de revisión de oferta.';
-      const html = '<p>Te has suscrito a notificaciones de <strong>revisión de oferta</strong>.</p>';
-      const r = await sendMail(email, 'Suscripción a revisión de oferta confirmada', text, html);
-      return res.json({ ok: true, ...r });
-    } catch (err) {
-      console.error('Error suscribirseRevisionOferta:', err);
-      return res.status(500).json({ error: 'No se pudo registrar la suscripción' });
-    }
-  },
-
-  obtenerEstadoSuscripcionRevisionOferta: async (req, res) => {
-    try {
-      const email = String((req.params || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesRevisionTable();
-      const [rows] = await pool.query('SELECT activo FROM suscripciones_revision_oferta WHERE email = ?', [email]);
-      if (!rows.length) return res.json({ suscrito: false });
-      return res.json({ suscrito: !!rows[0].activo });
-    } catch (err) {
-      console.error('Error obtenerEstadoSuscripcionRevisionOferta:', err);
-      return res.status(500).json({ error: 'Error consultando suscripción' });
-    }
-  },
-
-  cancelarSuscripcionRevisionOferta: async (req, res) => {
-    try {
-      const email = String((req.params || {}).email || '').trim().toLowerCase();
-      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !re.test(email)) {
-        return res.status(400).json({ error: 'Email inválido' });
-      }
-      await ensureSuscripcionesRevisionTable();
-      const [result] = await pool.query('UPDATE suscripciones_revision_oferta SET activo = 0 WHERE email = ?', [email]);
-      return res.json({ ok: true, updated: result.affectedRows });
-    } catch (err) {
-      console.error('Error cancelarSuscripcionRevisionOferta:', err);
-      return res.status(500).json({ error: 'Error cancelando suscripción' });
-    }
-  },
-
   checkRevisionOfertaSchema: async () => {
     const cols = await getTableColumns('revision_oferta');
     if (!cols.size) {
@@ -3704,4 +3673,5 @@ const solicitudesController = {
   }
 };
 
+// Exportar funciones auxiliares para uso externo si es necesario
 module.exports = solicitudesController;
